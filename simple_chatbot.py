@@ -16,6 +16,18 @@ import gzip
 import requests
 import argparse
 from pdb import set_trace
+from youtube_transcript_api import YouTubeTranscriptApi as yt
+from youtube_transcript_api.formatters import TextFormatter
+
+
+def download_youtube_transcript(url):
+    video_id = url.split("watch?v=")[1]
+    print(video_id)
+    transcript = yt.get_transcript(video_id)
+    formatter = TextFormatter()
+    formatted_transcript = formatter.format_transcript(transcript)
+    with open(f"./data/{video_id}.txt", "w", encoding="utf-8") as text_file:
+        text_file.write(formatted_transcript)
 
 
 class ChatBot:
@@ -55,14 +67,18 @@ class ChatBot:
 
     def chat(self):
         while True:
-            user_input = input("You: ")
+            user_input = input("You:\n")
+            print("")
             output = self.chain.predict(human_input=user_input)
             print(f"{self.name}: ", output)
 
 
 def main():
-    chat_bot = ChatBot()
-    chat_bot.chat()
+    url = "https://www.youtube.com/watch?v=vvTOfV38MnM"
+    download_youtube_transcript(url)
+
+    # chat_bot = ChatBot()
+    # chat_bot.chat()
 
 
 if __name__ == "__main__":
