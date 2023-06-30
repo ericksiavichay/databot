@@ -5,7 +5,10 @@ A simple chatbot over a dataset.
 """
 
 import openai
-import anthropic
+import cohere
+from langchain.llms import Cohere
+from langchain import ConversationChain, LLMChain, PromptTemplate
+from langchain.memory import ConversationBufferWindowMemory
 import os
 import time
 import json
@@ -16,86 +19,51 @@ from pdb import set_trace
 
 
 class ChatBot:
-    def __init__(self, data_filename, name="Arize AI", forget=True):
+    def __init__(self, name="Arize AI"):
         openai.api_key = os.environ["OPENAI_API_KEY"]
+        cohere.api_key = os.environ["COHERE_API_KEY"]
         self.name = name
-        self.forget = forget
-      
 
+        template = """Assistant is a large language model trained by Cohere.
+
+        Assistant is designed to be able to assist with a wide range of tasks, from answering simple questions to providing in-depth explanations and discussions on a wide range of topics. As a language model, Assistant is able to generate human-like text based on the input it receives, allowing it to engage in natural-sounding conversations and provide responses that are coherent and relevant to the topic at hand.
+
+        Assistant is constantly learning and improving, and its capabilities are constantly evolving. It is able to process and understand large amounts of text, and can use this knowledge to provide accurate and informative responses to a wide range of questions. Additionally, Assistant is able to generate its own text based on the input it receives, allowing it to engage in discussions and provide explanations and descriptions on a wide range of topics.
+
+        Overall, Assistant is a powerful tool that can help with a wide range of tasks and provide valuable insights and information on a wide range of topics. Whether you need help with a specific question or just want to have a conversation about a particular topic, Assistant is here to assist.
+
+        {history}`
+        Human: {human_input}
+        Assistant:"""
+
+        prompt = PromptTemplate(
+            input_variables=["history", "human_input"], template=template
+        )
+        self.chain = LLMChain(
+            llm=Cohere(
+                model="command-light", cohere_api_key=cohere.api_key, temperature=0.1
+            ),
+            prompt=prompt,
+            verbose=False,
+            memory=ConversationBufferWindowMemory(k=10),
+        )
 
     @staticmethod
     def read_file(file_path):
         with open(file_path, "r") as file:
             return file.read()
 
-    def get_anthropic_response(self, human_prompt=None):
-        if human_prompt:
-            if self.forget:
-                final_prompt = (
-                    self.context_anthropic
-                    + f"{anthropic.HUMAN_PROMPT} {human_prompt} {anthropic.AI_PROMPT}"
-                )
-            else:
-                self.context_anthropic += (
-                    f"{anthropic.HUMAN_PROMPT} {human_prompt} {anthropic.AI_PROMPT}"
-                )
-                final_prompt = self.context_anthropic
-        c = anthropic.Client(self.anthropic_api_key)
-        response = c.completion(
-            prompt=final_prompt,
-            stop_sequences=[anthropic.HUMAN_PROMPT],
-            model=self.model,
-            max_tokens_to_sample=40000,
-        )
-
-        if not self.forget:
-            self.context_anthropic += response["completion"]
-        return response
-
-    def get_openai_response(self, prompt=None):
-        if prompt:
-            self.context_openai.append({"role": "user", "content": prompt})
-        response = openai.ChatCompletion.create(
-            model=self.model,
-            messages=self.context_openai,
-            temperature=0,
-        )
-        ai_message = response["choices"][0]["message"]["content"].strip()
-        self.context_openai.append({"role": "assistant", "content": ai_message})
-        return response
-
     def chat(self):
         while True:
-            if self.company == "openai":
-                prompt = input(f"\n[{num_tokens}/{self.max_tokens}]You: ")
-                start_time = time.perf_counter()
-                response = self.get_openai_response(prompt=prompt)
-                end_time = time.perf_counter()
-                total_time = end_time - start_time
-                num_tokens = response["usage"]["total_tokens"]
-                model = response["model"]
-                print(
-                    f"\n[{num_tokens}/{self.max_tokens}][{total_time:.0f}s]{model}: "
-                    + self.context_openai[-1]["content"]
-                )
-            elif self.company == "anthropic":
-                print(
-                    f"[{anthropic.count_tokens(self.context_anthropic)}/{self.get_max_tokens(self.model)}] Human:"
-                )
-                prompt = anthropic.HUMAN_PROMPT + " " + input()
-
-                start_time = time.perf_counter()
-                response = self.get_anthropic_response(human_prompt=prompt)
-                end_time = time.perf_counter()
-                total_time = end_time - start_time
-                num_tokens = len(self.context_anthropic.split(" "))
-                
-                print(anthropic.AI_PROMPT, " " + response["completion"])
+            user_input = input("You: ")
+            output = self.chain.predict(human_input=user_input)
+            print(f"{self.name}: ", output)
 
 
 def main():
     chat_bot = ChatBot()
     chat_bot.chat()
+
 
 if __name__ == "__main__":
     main()
