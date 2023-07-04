@@ -1,0 +1,189 @@
+,Question,Out-of-doc,Topic,notes,Answers
+0,How do I use the SDK to upload a ranking model?,,,,I don't know the answer.
+1,What drift metrics are supported in Arize?,,,,"Arize supports drift metrics such as Population Stability Index (PSI), KL Divergence, and Wasserstein Distance."
+2,Does Arize support batch models?,,,,"Yes, Arize supports batch models."
+3,Does Arize support training data?,,,,"Based on the given context, it is not explicitly mentioned whether Arize supports training data or not. Therefore, I don't know the answer to this question."
+4,How do I configure a threshold if my data has seasonality trends?,,,,"To configure a threshold for data with seasonality trends, you can use the automatic threshold feature provided by Arize. The automatic threshold sets a dynamic value for each data point based on at least 14 days of production data to determine a trend. This allows the threshold to adapt to the seasonal patterns in your data. Alternatively, you can also create a custom threshold and adjust it based on your understanding of the seasonality trends in your data."
+5,How are clusters in the UMAP calculated? When are the clusters refreshed?,,,,"Clusters in UMAP are calculated using an unsupervised learning technique, which means that the algorithm finds patterns and structure in the data on its own. The clusters are refreshed whenever there is a change in the data or when the user generates a new UMAP visualization."
+6,How does Arize calculate AUC?,,,,The provided context does not mention how Arize calculates AUC.
+7,Can I send truth labels to Arize separtely? ,,,,"Yes, you can send truth labels to Arize separately."
+8,How do I send embeddings to Arize?,,,,"There are two ways to send embeddings to Arize. You can either generate your own embeddings and send them to Arize using the UI or the Monitors API, or you can let Arize generate the embeddings for you by using the Auto-Embeddings functionality in the Python SDK."
+9,Can I copy a dashboard,,,,"Yes, you can copy a dashboard."
+10,Can I copy a dashboard to a new space? ,,,,"Yes, you can copy a dashboard to a new space."
+11,How do I configure permissions for GBQ? ,,,,"To configure permissions for Google BigQuery (GBQ), you need to grant access to the Arize service account. This can be done by following these steps:
+
+1. Go to the IAM page in GBQ and click ""Grant Access"".
+2. Add the Arize service account as the ""Principal"" with the ""BigQuery Job User"" role.
+3. Navigate to your dataset from the BigQuery SQL Explorer page.
+4. Select ""Sharing"" and click on ""Permissions"".
+5. Click ""Add Principal"" and add the Arize service account ([email protected]) as a BigQuery Data Viewer, then click ""Save"".
+6. To grant the roles/bigquery.jobUser role to the Arize service account, you can use the command ""gcloud projects add-iam-policy-binding ${PROJECT_ID} --member=serviceAccount:[email protected] --role=roles/bigquery.jobUser"".
+7. To grant the roles/bigquery.dataViewer role, you can refer to the official documentation for granting access.
+
+Please note that these steps may vary depending on your specific setup and requirements. It's always recommended to refer to the official documentation or reach out to Arize support for assistance."
+12,How often does Arize query the table for table import jobs? ,,,,Arize queries the table for table import jobs based on the configured refresh interval.
+13,Can you configure the query interval for table import jobs? ,,,,"Yes, you can configure the refresh interval for table import jobs."
+14,Do you need to have a prediction label for classification models? ,,,,"Yes, you need to have a prediction label for classification models."
+15,Do you need a prediction ID for the training set? ,,,,"No, a prediction ID is not needed for the training set."
+16,How do you set up pagerduty alerts? ,,,,"To set up PagerDuty alerts, you can go to the 'Integrations' tab in your organization settings or the 'Config' tab within a model. From there, you can select PagerDuty as the integration and follow the steps to set up the API integration."
+17,Does the ingestion job for GBQ tables detect changes in the table schema? ,,,in customer's words,"Based on the given context, it is not mentioned whether the ingestion job for GBQ tables detects changes in the table schema."
+18,How do I send in extra metadata with each record?,,,,I don't know the answer.
+19,"What is the current retention period of the data in Arize (if any), and can we customise this? (e.g. could we choose to set a specific retention period of, say 90-days, so that all data older than 90 days is deleted from Arize systems?)",,,in customer's words,The context does not provide information about the current retention period of the data in Arize or whether it can be customized.
+20,"Does Arize store the individual records (rows) somewhere, or does it only store the aggregations calculated from the data?",,,in customer's words,"Based on the given context, it is not explicitly mentioned whether Arize stores individual records (rows) or only the aggregations calculated from the data."
+21,What happens if I upload actuals twice? ,,,,"If you upload actuals twice, you may run into problems visualizing your data within the platform. It is recommended to revise your data to represent unique ranks for a given prediction group and re-upload your data."
+22,What format should the prediction timestamp be? ,,,,The prediction timestamp can be in seconds or an RFC3339 timestamp format.
+23,How often do the monitors run and evalaute? ,,,,The provided context does not specify how often the monitors run and evaluate.
+24,Do we have the ability to resolve a monitor? ,,,,"Yes, we have the ability to resolve a monitor."
+25,Does Arize support Microsoft Teams alerting?,x,,,I don't know if Arize supports Microsoft Teams alerting.
+26,What should I do if I sent in duplicate prediction IDs? ,,,,"If you sent in duplicate prediction IDs, you should revise your data to ensure that each prediction ID is unique for a given prediction group. Re-upload your data after making the necessary revisions."
+27,Why does Arize use UMAP over t-SNE? ,,,,Arize uses UMAP over t-SNE because UMAP maintains both local and global structures in high-dimensional datasets and scales better than other dimension reduction techniques.
+28,Can I export a dashboard as pdf? ,,,,I don't know.
+29,How does Arize's surrogate explainability model work? ,,,,Arize's surrogate explainability model works by training an interpretable model to approximate the predictions of a black box model. This surrogate model is then used to generate SHAP values when the black box model is not available. The goal is to closely approximate the predictions of the black box model and generate feature importance values from the interpretable surrogate model.
+30,Can I update my predictions or features on Arize? ,,,,"Based on the given context, it is not clear whether you can update your predictions or features on Arize."
+31,What happens if my model schema changes after I deploy a new version of the model? ,,,,"If your model schema changes after you deploy a new version of the model, you may need to update the corresponding columns and data in the Arize UI to ensure that the new schema is accurately represented."
+32,How does Arize integrate with SageMaker?,,,,"Arize integrates with SageMaker by enabling developers to create, train, and deploy machine-learning models in the cloud. It also allows users to monitor and observe models deployed on SageMaker for data quality issues, performance checks, and drift."
+33,Does the ingestion job for GBQ tables detect changes in schema?,,,,"Based on the given context, it is not explicitly mentioned whether the ingestion job for GBQ tables detects changes in schema."
+34,Can I configure the Arize data sampling policy?,,,,"Based on the given context, it is not clear whether you can configure the Arize data sampling policy."
+35,about how long should it take for delayed actuals to link to predictions in the UI,,,,"The delayed actuals should link to predictions in the UI within the join window, which is up to 14 days from when the prediction was received."
+36,Can I change strings to numeric in Arize?,,,,"Based on the given context, it is not clear whether Arize supports changing strings to numeric."
+37,What is the definition of a model or a prediction in Arize?,,,,"Based on the given context, the definition of a model or a prediction in Arize is not explicitly provided."
+38,How do I pass in delayed ground truth? ,,,,"To pass in delayed ground truth, you can utilize the Arize joiner to match the delayed actuals with their corresponding predictions. Simply upload your actuals data using the same prediction_id as its corresponding prediction. The joiner will automatically trigger daily at 05:00 UTC to map the delayed actuals with the predictions received up to 14 days prior."
+39,Can I pass in my own metrics within Arize?,,,,"Yes, Arize supports custom metrics, which allow users to define their own metrics tailored to their specific machine learning needs. These custom metrics can be used across the platform in dashboards, monitors, and performance tracing. Users can derive new metrics using a combination of existing model dimensions and functions using the Arize Query Language, which is similar to SQL. The custom metric editor provides syntax validation, auto-completion of dimension names, and a preview of the query before saving it."
+40,How large should my file sizes be when uploading data? ,,,,Files around the 50MB mark usually provide the best balance between volume of data and system performance.
+41,How long does it take to ingest my data? ,,,,It can take approximately 10 minutes for Arize to fully ingest and populate data throughout the platform.
+42,How do I edit the frequency that my table import job runs? ,,,,I don't know the answer to that question.
+43,What permissions are needed to import my files from cloud storage? ,,,,"The permissions needed to import files from cloud storage vary depending on the cloud storage provider. For Azure Blob Storage, you need to share the storage account name and access key with Arize. For Google Cloud Storage (GCS), you need to grant Arize access to your bucket. For AWS S3, you can either configure an individual bucket policy or assign Arize a role to access multiple buckets using external IDs."
+44,How do I grant permissions to import my GBQ table? ,,,,"To grant permissions to import your GBQ table, you need to navigate to the IAM page and click ""Grant Access"". Then, add the Arize service account as the ""Principal"" with the ""BigQuery Job User"" role. Additionally, you need to grant access to your dataset, table, or view by selecting ""Share"" and clicking on ""Permissions"". Add the Arize service account as a BigQuery Data Viewer and save the changes."
+45,Does Arize ingest null values?,,,,"Yes, Arize generally accepts null values within prediction and actual columns."
+46,Which file or dataframe columns can be null?,,,,"Based on the given context, it is not explicitly mentioned which file or dataframe columns can be null. Therefore, it is not possible to determine which columns can be null."
+47,What file types are supported for cloud storage uploads?,,,,The file types supported for cloud storage uploads are Parquet files.
+48,Is prediction_id required?,,,,"Yes, prediction_id is required."
+49,How do I need to format timestamps?,,,,The prediction timestamp can be formatted in seconds or as an RFC3339 timestamp.
+50,Why do I need a timestamp?,,,,"You need a timestamp to track and analyze the timing of your predictions. The timestamp allows you to understand when the prediction was made and compare it to the actual outcome. It is especially important for time series models where the forecast date and lag are crucial in analyzing the performance of the model. Additionally, the timestamp is used to generate time series charts in Arize."
+51,What time unit is a timestamp?,,,,A timestamp is typically measured in seconds.
+52,Does Arize support timestamps that are pandas format?,,,,"Based on the given context, it is not explicitly mentioned whether Arize supports timestamps in pandas format. Therefore, the answer is ""I don't know."""
+53,Can I create any string format that is a timestamp?,,,,"No, you cannot create any string format that is a timestamp. The timestamp format should either be in seconds or in RFC3339 format."
+54,Can I send latent groundtruth for ranking models?,,,,I don't know.
+55,Does I Arize count duplicate prediction IDs as a single prediction? ,,,,"No, Arize counts duplicate prediction IDs as separate predictions."
+56,Does Arize sample the data on ingestion of files?,,,,"Based on the given context, it is not mentioned whether Arize samples the data on ingestion of files."
+57,When connecting to a table is the data copied into Arize or does Arize just run off of the table?,,,,Arize runs off of the table.
+58,Is the entire data set copied when connecting to data in files?,,,,"No, the entire data set is not copied when connecting to data in files."
+59,How long does it take for data to show up in the platform?,,,,I don't know.
+60,Does Arize support PSI as a drift metric?,,,,"Yes, Arize supports PSI as a drift metric."
+61,Arize help,,,,I don't know the answer.
+62,Dataset not showing up,,,,I don't know the answer.
+63,"Is it possible for me to change the threshold for PSI for the drift tab, as in what I can configure for each monitor?",,,,"Yes, it is possible to change the threshold for PSI (Population Stability Index) for the drift tab. You can edit the threshold value for each monitor individually by referencing the 'Custom Monitor' tab and defining the desired threshold value in the 'Define the Alerting' section."
+64,I don't have actuals,,,,"If you don't have actuals, you can refer to Arize's default actual support information to understand how nulls are handled for your specific use case."
+65,I see data in the data ingestion tab but none of the charts are showing data. What's going wrong?,,,,"It can take approximately 1 minute for the bar charts to appear and about 10 minutes for the data to fully load in the 'Data Ingestion' tab. If you have waited for this amount of time and the charts still do not show any data, there may be an issue with the data ingestion process. You can try refreshing the page or reaching out to Arize support for further assistance."
+66,My monitor's latest status is green even though t he chart shows the threshold is crossed. What does this mean?,,,,"This means that the monitor's latest status is ""Healthy"" even though the chart shows that the threshold has been crossed."
+67,What is a managed monitor?,,,,A managed monitor is a type of monitor that is automatically created and enabled based on default settings. It is used for monitoring a model and can be enabled from the 'Setup Monitors' tab. Managed monitors are created for all applicable features or dimensions and are based on a desired metric. They simplify the setup workflow and are suitable for first-time monitoring or trying out new metrics.
+68,What is euclidean distance? I thought it is the distance between points. What does it mean on the page?,,,,"Euclidean distance is indeed the distance between points in a Euclidean space. In the given context, Euclidean distance is used as a metric to measure the similarity or dissimilarity between two sets of embeddings. It is calculated as the square root of the sum of the squared differences between the components of two vectors. In the Arize platform, Euclidean distance is calculated using the original embeddings, not the UMAP projections. It can be used to monitor drift in embeddings by comparing the centroids of two sets of embeddings."
+69,Can I deploy arize on my own kubernetes cluster?,,,,"Yes, you can deploy Arize on your own Kubernetes cluster."
+70,How are the records sent to Arize secured? How does arize handle sensitive data?,,,,"Arize ensures the security of records by being SOC2 Type 2 certified, which means they have adequate processes and policies in place to securely handle customer and organizational data. They also have certifications validating their health information security program, which includes the essential elements of HIPAA's Security Rule and the HITECH Act. However, the specific details of how Arize handles sensitive data are not provided in the given context."
+71,Data ingestion page does not show the correct number of records,,,,"Check the data ingestion tab to see if the bar charts representing the volume of data received for predictions, actuals, and feature importance values match what is expected. Hover over the bars to ensure the volume is correct. If the data ingestion volume is as expected, perform a quick data ingestion check by verifying features and tags on the 'Overview' or 'Datasets' tab."
+72,How do I link my actuals to predictions? ,,,,"To link your actuals to predictions, you can use the same prediction ID. By uploading your actuals data with the corresponding prediction ID, Arize can automatically connect the actuals to the predictions sent earlier. This can be done using the Arize joiner tool in the Arize platform."
+73,Can I create one FileImporter job with both predictions and latent actuals? ,,,,"Yes, you can create one FileImporter job with both predictions and latent actuals if they can be sent together."
+74,Why is my FileImport job is failing on uploading actuals?,,,,I don't know the answer.
+75,What is a score categorical model?,,,,A score categorical model is a categorical model that assigns scores or probabilities to different categories or classes. It is specifically designed to work with visual data and perform tasks such as object detection and image classification.
+76,I am sending images with my embeddings but the images don't load. What's going wrong?,,,,"Based on the given context, it is not possible to determine the exact reason why the images are not loading without further information. It could be due to various reasons such as incorrect image URLs, access restrictions, or issues with the image file format."
+77,I am sending vedeos in link_to_data but they don't show up. Why?,,,,I don't know the answer.
+78,Does arize support timeseries data?,,,,I don't know.
+79,Where can I find HIPAA reporting?,,,,You can find information about Arize AI's HIPAA reporting in the context provided.
+80,How do i get feature importance on data I upload in the file importer? ,,,,"To get feature importance on data uploaded in the file importer, you can log the feature importances to the Arize platform. By logging these values, you will be able to view the global feature importances of your predictions and perform global and cohort prediction-based analysis to compare feature importances for your model's features."
+81,How can I move a model from one space to another?,,,,"Based on the given context, it is not explicitly mentioned how to move a model from one space to another. Therefore, the answer is ""I don't know."""
+82,How do I get an Arize api key?,,,,"To get an Arize API key, you need to sign up for their product. Once you sign up, you will receive your API key and Space key."
+83,What is a space key?,,,,"Based on the given context, there is no information provided about a ""space key."" Therefore, it is not possible to determine what a space key is based on the given information."
+84,How do I rotate my credentials?,,,,I don't know the answer to this question.
+85,"I can't recover my password, how do I do that?",,,,I don't know the answer.
+86,What is arize's retention policy?,,,,I don't know the answer to that question.
+87,How do I delete a space?,,,,"To delete a space, you need to have admin access to the space. Only admins have the ability to delete spaces."
+88,How do I delete a space and organization?,,,,"To delete a space, you need to be an admin or have the necessary permissions. You can go to the 'Space Settings' and look for the option to delete the space. If you don't see this option, it means you don't have the required permissions to delete the space.
+
+To delete an organization, you need to be an admin or have the necessary permissions. You can go to the 'Org Settings' and look for the option to delete the organization. If you don't see this option, it means you don't have the required permissions to delete the organization."
+89,How do I change my email address?,,,,"To change your email address, you need to go to the ""Config"" tab on the right under the main navigation bar. From there, scroll down to the ""Alert Email"" card and click on the drop-down menu to select the integration(s) where you want to send your alerts."
+90,I sent the wrong records to Arize. How do I delete them?,,,,"To delete the wrong records that you sent to Arize, you can click on 'Job Options' and then select 'Delete' for the specific job. This will set the job status as 'deleted' in Arize."
+91,I sent 8000 records but I only see 1000 in the UI. Why?,,,,I don't know the answer.
+92,I can't find my feature in any of the dropdowns.,,,,I don't know.
+93,How do I use custom metrics on monitors?,,,,"To use custom metrics on monitors, you can follow these steps:
+
+1. Go to the 'Custom Metrics' page and click on '+ actions'.
+2. Select 'Create Monitor'.
+3. In the performance metric selector, choose 'Custom Metric' from your list of saved custom metrics.
+4. Follow the monitor setup workflow to configure the monitor according to your needs.
+
+Note: Custom metrics require a baseline to compare against, so make sure you have that set up before using custom metrics on monitors."
+94,How do I unsubscribe from a monitor?,,,,"To unsubscribe from a monitor, you can delete the integration associated with that monitor from the PagerDuty config page by clicking the trash icon."
+95,Do predictions from deleted models count against my plan usage?,,,,I don't know the answer to this question.
+96,How do I change current SAML auth to remove the email and only authorize using first name and last name?,,,,I don't know the answer to this question.
+97,What counts against my plan usage?,,,,I don't know the answer to that question.
+98,What happens if I go over my plan's allocated volume?,,,,I don't know the answer to that question.
+99,what is the change_timestamp on table import?,,,,"The change_timestamp on table import is a field used by Arize to track which new rows need to be imported as new data is constantly synced. It can be of the types TIMESTAMP, DATE, or DATETIME. It is recommended to ensure that this column is partitioned for better performance and cost optimization. The values in the change_timestamp field should also be unique for best performance."
+100,do i need to upload timestamps? ,,,,"Yes, you need to upload timestamps. The prediction timestamp represents when your model's prediction was made and is required for Arize time series charts."
+101,How do I load private images into Arize?,,,,"To load private images into Arize, you need to enable AWS bucket access permissions and add the private S3 image URLs or URIs in the appropriate column or field in Arize. Additionally, you need to tag your bucket with the key ""arize-integration-key"" and provide the corresponding value."
+102,What do I do if I sent in a feature whose type changed?,,,,"If you sent in a feature whose type changed, you should check your model schema and ensure that you have correctly mapped the feature column. Additionally, make sure that the values within the feature column are representative of what you intended to ingest. If the issue persists, there may be other potential problems with the data received, and you may need to investigate further."
+103,What's the difference between Arize's Pro and Enterprise plans?,,,,I don't know the answer to this question.
+104,how to share customized dashboard?,,,,The provided context does not contain information on how to share a customized dashboard.
+105,how to create custom metric for ROI?,,,,I don't know the answer.
+106,Where do I find the API and Space keys?,,,,You will receive your API and Space keys once you sign up for the Arize product.
+107,How can I run Arize on my own hardware?,,,,"To run Arize on your own hardware, you can use Arize On-Prem. This solution allows you to deploy Arize within your company's AWS, GCP, or Azure account. The environment can be provisioned by either Arize or your company using Terraform and Kubernetes. For more detailed setup instructions, you can reach out to the sales team at [email protected]"
+108,Is my prediction data shared with any services except for Arize?,,,,"Based on the given context, it is not explicitly mentioned whether the prediction data is shared with any services other than Arize. Therefore, it is not possible to determine if the prediction data is shared with any other services."
+109,How do I change fields on a prediction,,,,"To change fields on a prediction, you can modify the model schema through the form input or a JSON schema. You can set up model configurations and map your table using a form or a JSON schema. The specific fields that can be changed include prediction_ID, prediction_label, prediction_score, actual_label, actual_score, and timestamp. The required or optional status of these fields may vary based on the model type and data format."
+110,Can I create monitors with an API,,,,"Yes, you can create monitors using the Arize Monitors API."
+111,Can i create dashboards with an API,,,,"Yes, you can create dashboards with an API."
+112,How do I delete data,,,,I don't know the answer.
+113,I can't see the points in the UMAP. How do I make the points bigger?,,,,I don't know the answer.
+114,I want to cancel my account. How do I do that?,,,,I don't know the answer to that question.
+115,I want to delete my data. Help.,,,,Having trouble? Reach out to us via email [email protected] or Slack us in the #arize-support channel for more support.
+116,How do I update my predictions?,,,,"To update your predictions, you need to revise your data to represent unique ranks for a given prediction group and re-upload your data."
+117,The file importer job failed. How do I restart it?,,,,"To restart a failed file importer job, you can click on the job ID to view the job details. This will provide information about the file path, query ID, potential errors, and error locations. Once you have identified the failure point, you can make the necessary adjustments and append the edited row to the end of your table with an updated change_timestamp value."
+118,Does arize support snowflake?,,,,I don't know if Arize supports Snowflake.
+119,How do I ingest CSV data?,,,,"To ingest CSV data, you can set up an import job in Arize from either AWS S3 or Google Cloud Storage (GCS). 
+
+For AWS S3:
+1. Navigate to the 'Upload Data' page in the Arize platform.
+2. Select the 'AWS S3' card to begin a new file import job.
+3. Enable access to individual or multiple buckets by configuring an individual bucket policy or multiple buckets via role-based permissions.
+4. Specify the file path in AWS S3 where your CSV data is located.
+
+For Google Cloud Storage (GCS):
+1. Navigate to the 'Upload Data' page in the Arize platform.
+2. Select the 'GCS' card to begin a new file import job.
+3. Specify the file path in GCS where your CSV data is located. You can easily copy the file path from GCS by navigating to the folder and clicking on a file.
+4. Paste the file path in the Arize UI, and Arize will automatically infer your bucket name and prefix based on the folder.
+
+After setting up the import job, Arize will ingest the CSV data and you can monitor the import progress in the 'Job Status' tab."
+120,How do I get access to my embeddings?,,,,You can either generate your own embeddings or let Arize generate them for you.
+121,I don't see errors in the SDK but my records don't show up. How do I troubleshoot?,,,,"To troubleshoot this issue, you can use the dry run and job details UI. If your dry run is successful but your job fails, you can click on the job ID to view the job details. This will provide information about the file path or query ID, the last import job, potential errors, and error locations. By identifying the job failure point, you can append the edited row to the end of your table with an updated change_timestamp value."
+122,Can I download my data?,,,,"Yes, you can download your data."
+123,How can I change the threshold of my metric?,x,,,"To change the threshold of your metric, you can adjust the number of standard deviations used in the calculation of the automatic threshold. This can be done in the 'Managed Data Quality Monitors' card in the 'Config' tab on the Monitors page to edit all of your managed monitor auto thresholds in bulk. Additionally, you can set a custom threshold by specifying a specific value for additional flexibility."
+124,How do I duplicate a dashboard?,,,,I don't know the answer.
+125,My monitor is noisy. How do I fix?,,,,"To fix a noisy monitor, you can adjust the auto threshold sensitivity by changing the standard deviation number. Lowering the number of standard deviations will increase the sensitivity, while increasing the standard deviation number will decrease the sensitivity. Additionally, you can customize individual monitors to send alerts to a different or additional integration to keep an eye on a specific monitor."
+126,How do I download my data?,,,,"Based on the given context, there is no specific information provided on how to download data. Therefore, I don't know the answer to the question."
+127,I got a 200 from my SDK request but my data never showed up,,,,I don't know the answer.
+128,Is there a way to automatically infer which columns serve which purpose during the ingestion process?,,,,"No, the given context does not provide any information about automatically inferring the purpose of columns during the ingestion process."
+129,How much does the Arize platform cost and how do you charge?,x,,,I don't know the answer to this question.
+130,What is the price of the Arize platform? ,x,,,I don't know the answer to that question.
+131,"How much does Arize charge and how do you price, is it per model?",x,,,I don't know the answer to this question.
+132,What would Arize cost annually and what is the likely ROI? I assume it is quite high ROI,x,,,I don't know the specific cost of Arize AI or the likely ROI.
+133,Do you have a pricing calculator that can help me understand the price of Arize relative to the various deployment options?,x,,,I don't know.
+134,What is the cost of the Arize platform?,x,,,I don't know the answer to that question.
+135,Is there cost for Arize beyond an annual subscription price? ,x,,,I don't know the answer to this question.
+136,What is the price per model or per volume and how much does the price discount as the volume goes up?,x,,,"The given context does not provide any information about the price per model or per volume, or any information about how the price discounts as the volume goes up."
+137,What is the annual cost of a VPC deployment option? How does that price scale?,x,,,I don't know the answer to this question.
+138,How expensive is the Arize platform and how do you charge?,x,,,The given context does not provide information about the cost of the Arize platform or how they charge for their services.
+139,Does Arize support object segmentation use cases?,x,image segmentation,,"No, the context does not mention anything about Arize supporting object segmentation use cases."
+140,"If I am using an object segmentation model, should I apply my own segmentation mask to the image before uploading the image, or will the platform do that for me?",x,image segmentation,,The platform will not automatically apply a segmentation mask to the image for you. You should apply your own segmentation mask to the image before uploading it.
+141,Can you give me an example schema I could use for uploading inference data from an image segmentation model?,x,image segmentation,,I don't know the answer.
+142,What's the difference between image segmentation and object detection?,x,image segmentation,,"Image segmentation is the process of dividing an image into multiple segments or regions based on certain criteria, such as color, texture, or boundaries. It aims to identify and separate different objects or regions within an image. On the other hand, object detection is the task of identifying and locating specific objects within an image or video by assigning them bounding boxes. It not only identifies the objects but also provides their spatial location within the image."
+143,How do you recommend I create embeddings for an object segmentation model?,x,image segmentation,,I don't know.
+144,Is it possible to upload multiple masks for the same image in a segmentation use case?,x,image segmentation,,I don't know.
+145,What evaluation metrics are supported for image segmentation use cases?,x,image segmentation,,"The provided context does not mention any specific evaluation metrics for image segmentation use cases. Therefore, it is not possible to determine which evaluation metrics are supported for image segmentation use cases."
+146,Do you have an example image segmentation notebook?,x,image segmentation,,I don't know.
+147,How many classes are supported for image segmentation?,x,image segmentation,,I don't know the answer to that question.
+148,Do you support IoU for image segmentation?,x,image segmentation,,I don't know.
+149,This is a test question?,,,,I don't know.
+150,?,,,,I don't know the answer.
+151,This is a question?,,,,I don't know the answer to this question.
+152,"My service is a hosting service designed for hosting your website. You can put your website on our service and host it with accelerated CDN delivery, tracking of usage data for running your website. Our service is one of the best on the internet in terms of delivery and experience.",,,,"Based on the given context, the helpful answer would be: 
+
+I don't know."
