@@ -6,6 +6,7 @@ A simple chatbot over a dataset.
 
 import itertools
 import zipfile
+import pandas as pd
 
 import openai
 import cohere
@@ -16,7 +17,7 @@ from langchain.chat_models import ChatOpenAI
 from langchain.embeddings import OpenAIEmbeddings, CohereEmbeddings
 from langchain.vectorstores import Pinecone, Chroma
 from langchain.memory import ConversationBufferWindowMemory, ConversationBufferMemory
-from langchain.chains import ConversationalRetrievalChain
+from langchain.chains import ConversationalRetrievalChain, RetrievalQA
 from langchain.document_loaders import YoutubeLoader, GitbookLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import os
@@ -111,17 +112,25 @@ def main():
     llm_model_name = "gpt-3.5-turbo"
 
     # llm = ChatOpenAI(temperature=0.2)
-    llm = OpenAI(model_name=llm_model_name, temperature=0.2)
+    llm = OpenAI(model_name=llm_model_name, temperature=0)
 
-    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-    qa_chain = ConversationalRetrievalChain.from_llm(
-        llm, vectorstore.as_retriever(), memory=memory
-    )
+    # memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+    # qa_chain = ConversationalRetrievalChain.from_llm(
+    #     llm, vectorstore.as_retriever(), memory=memory
+    # )
 
-    while True:
-        user_input = input("\n\nYou:\n")
-        output = qa_chain({"question": user_input})["answer"]
-        print("\n\nArize Chat Bot: ", output)
+    memory = None
+    qa_chain = RetrievalQA.from_llm(llm=llm, retriever=vectorstore.as_retriever())
+
+    # while True:
+    #     user_input = input("\n\nYou:\n")
+    #     output = qa_chain({"question": user_input})["answer"]
+    #     print("\n\nArize Chat Bot: ", output)
+    data = pd.read_csv("arize_docs_questions.csv")
+    answers = []
+    for question in data["Question"]:
+        print("Trying: ", question)
+        answers.append(qa_chain.run(question))
 
     # chat_bot = ChatBot(qa_chain)
     # chat_bot.chat()
