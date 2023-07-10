@@ -72,8 +72,8 @@ def main():
     # docs_url = "https://docs.arize.com/arize/"
     # index_name = "arize-docs-ada-002" # the name of the index containing your docs' embeddings, for pinecone
 
-    embedding_model_name = "text-embedding-ada-002"
-    embedding_model = OpenAIEmbeddings(model=embedding_model_name)
+    # embedding_model_name = "text-embedding-ada-002"
+    # embedding_model = OpenAIEmbeddings(model=embedding_model_name)
     # load and parse data
     print("Loading data...")
     # documents = GitbookLoader(docs_url, load_all_paths=True).load()
@@ -100,7 +100,7 @@ def main():
                 string = file.read().decode('utf-8')
                 string_list_read.append(string)
 
-
+    set_trace()
     # vectorstore = Chroma.from_texts(string_list_read, embedding_model, persist_directory="./chroma_db")
     # vectorstore.persist() # save to disk
 
