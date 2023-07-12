@@ -7,6 +7,7 @@ A simple chatbot over a dataset.
 
 import os
 from typing import Dict, List, Optional, Tuple
+import numpy as np
 
 import openai
 
@@ -34,8 +35,8 @@ class ChromaWrapper(Chroma):
     def similarity_search_with_score(
         self, query: str, k: int = 4, filter=None, namespace=None
     ):
-        print("INSIDE WRAPPER SIM SEARCH BY QUERY CALL")
-        print("WRAPER SIM QUERY:", query)
+        # print("INSIDE WRAPPER SIM SEARCH BY QUERY CALL")
+        # print("WRAPER SIM QUERY:", query)
         embedding = self._embedding_function.embed_query(query)
         document_score_tuples = self.similarity_search_by_vector_with_relevance_scores(
             embedding=embedding,
@@ -54,20 +55,32 @@ class ChromaWrapper(Chroma):
             document_scores = []
             for doc, score in document_score_tuples:
                 document_texts.append(doc.page_content)
-                document_embeddings.append(self._embedding_function.embed_query(doc.page_content))
+                document_embeddings.append(self._embedding_function.embed_query(doc.page_content)) # may not have to do this if chroma is set up right
                 document_scores.append(score)
 
             self.callback.document_texts = document_texts
             self.callback.document_embeddings = document_embeddings
             self.callback.document_scores = document_scores
 
+        # print(document_score_tuples)
         return document_score_tuples
 
 class RetrievalCallbackHandler(OpenAICallbackHandler):
     def __init__(self, embedding_model=None):
         # super().__init__()
         self.embedding_model = embedding_model
-        self.retrieval_data = []  # eg: [query, response, documents, cost, score]
+        self.retrieval_data = {
+            'queries': [],
+            'query_embeddings': [],
+            'responses': [],
+            'response_embeddings': [],
+            'total_completion_costs': [],
+            'retrieved_contexts': [],
+            'retrieved_context_embeddings': [],
+            'retrieved_context_cosine_similarities': [],
+            'retrieved_context_relevancy_scores': [],
+            'precision_at_ks': []
+        }
 
     # def on_chain_start(self, serialized, inputs, **kwargs):
     #     # print("IN CHAIN START")
@@ -77,6 +90,20 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
     #     # embedding = self.embedding_model.embed_query(self.query)
     #     # self.query_embeddings.append(embedding)
     #     # print("query embedding", embedding)
+
+    def summarize_system(self):
+        # column_names = [name for name in self.retrieval_data.keys()]
+        # df = pd.DataFrame(self.retrieval_data, columns=column_names)
+
+        # key stats
+        # average precision at each k
+        # total cost
+
+        avg_precisions = np.mean(self.retrieval_data["precision_at_ks"], axis=0)
+        total_cost = np.sum(self.retrieval_data["total_completion_costs"])
+
+        print("Average Precisions at each k: ", avg_precisions)
+        print(f"[WIP] Total System Cost: ${total_cost:.2f}")
 
     def evaluate_query_and_context(self, query, context):
         EVALUATION_SYSTEM_MESSAGE = "You will be given a query and a reference text. You must determine whether the reference text contains an answer to the input query. Your response must be binary (0 or 1) and should not contain any text or characters aside from 0 or 1. 0 means that the reference text does not contain an answer to the query. 1 means the reference text contains an answer to the query."
@@ -99,24 +126,38 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
         )
         response = res["choices"][0]["message"]["content"]
         return int(response)
-        # return response["choices"][0]["message"]["content"]
 
     def compute_embedding_price(self, text):
         pass
 
     def on_chain_end(self, outputs, **kwargs):
-        print("IN CHAIN END")
         self.response = outputs["result"]
         embedding = self.embedding_model.embed_query(self.response)
         self.response_embedding = embedding
         self.completion_cost = self.total_cost
 
-        self.eval = self.evaluate_query_and_context(self.query, self.response)
-        print("EVAL:", self.eval)
+        print("NUM TOKENS IN CHAIN END:", self.total_tokens)
 
-        data = (self.query, self.query_embedding, self.response, self.response_embedding, self.document_texts, self.document_embeddings, self.document_scores, self.eval)
-        self.retrieval_data.append(data)
-        print("done")
+        self.evals = []
+        self.p_at_ks = []
+
+        # compute relevancy score via LLM and precision at k for each k
+        for index, retrieved_context in enumerate(self.document_texts):
+            eval = self.evaluate_query_and_context(self.query, retrieved_context)
+            self.evals.append(eval)
+
+            current_k = index + 1
+            p_at_current_k = sum(self.evals) / current_k
+            self.p_at_ks.append(p_at_current_k)
+
+        row = (self.query, self.query_embedding, self.response, self.response_embedding, self.total_cost, self.document_texts, self.document_embeddings, self.document_scores, self.evals, self.p_at_ks)
+        for key, data in zip(self.retrieval_data, row):
+            self.retrieval_data[key].append(data)
+
+    # def on_llm_start(self, serialized, prompts, **kwargs):
+    #     print("IN LLM START")
+    #     print("PROMPTS", prompts)
+        # print(kwargs)
 
 
     # def on_llm_end(self, response, **kwargs):
@@ -127,11 +168,12 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
    
 
 class ChatBot:
-    def __init__(self, name="Arize AI", embedding_model=None, llm=None, memory=None):
+    def __init__(self, name="Arize AI", embedding_model=None, llm=None, memory=None, k=4):
         self.name = name
         self.embedding_model = embedding_model
         self.llm = llm
         self.memory = memory
+        self.k = k
         self.vectorstore = None
 
     def vectorstore_from_url(self, url, persist_directory="./chroma_db"):
@@ -166,13 +208,13 @@ class ChatBot:
         if self.memory:
             self.qa_chain = ConversationalRetrievalChain.from_llm(
                 self.llm,
-                self.vectorstore.as_retriever(search_kwargs={"k": 2}),
+                self.vectorstore.as_retriever(k=self.k),
                 memory=self.memory,
             )
         else:
             self.qa_chain = RetrievalQA.from_llm(
                 llm=self.llm,
-                retriever=self.vectorstore.as_retriever(search_kwargs={"k": 2}),
+                retriever=self.vectorstore.as_retriever(k=self.k),
                 callbacks=callbacks,
             )
 
@@ -211,7 +253,6 @@ def main():
     #     user_input = input("\n\nYou:\n")
     #     output = qa_chain({"question": user_input})["answer"]
     #     print("\n\nArize Chat Bot: ", output)
-    # data = pd.read_csv("arize_docs_questions.csv")
     # answers = []
     # for question in data["Question"]:
     #     print("Trying: ", question)
@@ -233,6 +274,7 @@ def main():
     inputs = {
         "embedding_model": embedding_model,
         "llm": llm,
+        "k": 4
     }
 
     # initialize the chatbot
@@ -248,8 +290,13 @@ def main():
 
     # build the question answering retrieval chain
     chat_bot.build_chain(callbacks=[retrieval_callback_handler])
-    chat_bot.qa_chain.run("How do I grant permissions to import my GBQ table?")
-    chat_bot.qa_chain.run("what is the arize SDK?")
+
+    sheet_data = pd.read_csv("arize_docs_questions.csv")
+
+    for question in sheet_data["Question"]:
+        print(chat_bot.qa_chain.run(question))
+
+    retrieval_callback_handler.summarize_system()
 
     print("done")
 
