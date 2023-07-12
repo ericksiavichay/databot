@@ -4,136 +4,301 @@ Inspiration from Arize's chatbot files
 A simple chatbot over a dataset. 
 """
 
-import itertools
-import zipfile
-import pandas as pd
+
+import os
+from typing import Dict, List, Optional, Tuple
+import numpy as np
 
 import openai
-import cohere
-import pinecone
 
-from langchain.llms import OpenAI, Cohere
+from langchain.llms import OpenAI
+from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain.chat_models import ChatOpenAI
-from langchain.embeddings import OpenAIEmbeddings, CohereEmbeddings
+from langchain.embeddings import OpenAIEmbeddings
 from langchain.vectorstores import Pinecone, Chroma
 from langchain.memory import ConversationBufferWindowMemory, ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain, RetrievalQA
 from langchain.document_loaders import YoutubeLoader, GitbookLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-import os
-import time
-import json
-import gzip
-import requests
-import argparse
-from pdb import set_trace
+from langchain.callbacks.base import BaseCallbackHandler
+from langchain.callbacks import OpenAICallbackHandler
 
-# from youtube_transcript_api import YouTubeTranscriptApi as yt
-# from youtube_transcript_api.formatters import TextFormatter
+import pandas as pd
 
-def batch_embeddings(iterable, batch_size=100):
-    """A helper function to break an iterable into chunks of size batch_size.
-    
-    From Pinecone's documentation"""
-    it = iter(iterable)
-    chunk = tuple(itertools.islice(it, batch_size))
-    while chunk:
-        yield chunk
-        chunk = tuple(itertools.islice(it, batch_size))
+class ChromaWrapper(Chroma):
+    query_text_to_document_score_tuples = {}
+
+    def __init__(self, callback=None, **kwargs):
+        super().__init__(**kwargs)
+        self.callback = callback
+
+    def similarity_search_with_score(
+        self, query: str, k: int = 4, filter=None, namespace=None
+    ):
+        # print("INSIDE WRAPPER SIM SEARCH BY QUERY CALL")
+        # print("WRAPER SIM QUERY:", query)
+        embedding = self._embedding_function.embed_query(query)
+        document_score_tuples = self.similarity_search_by_vector_with_relevance_scores(
+            embedding=embedding,
+            k=k,
+            filter=filter,
+            namespace=namespace,
+        )
+        # print("WRAPPER SIM SEARCH RETRIEVED DOCUMENTS AND SCORES", document_score_tuples)
+
+        if self.callback:
+            self.callback.query = query
+            self.callback.query_embedding = embedding
+            
+            document_texts = []
+            document_embeddings = []
+            document_scores = []
+            for doc, score in document_score_tuples:
+                document_texts.append(doc.page_content)
+                document_embeddings.append(self._embedding_function.embed_query(doc.page_content)) # may not have to do this if chroma is set up right
+                document_scores.append(score)
+
+            self.callback.document_texts = document_texts
+            self.callback.document_embeddings = document_embeddings
+            self.callback.document_scores = document_scores
+
+        # print(document_score_tuples)
+        return document_score_tuples
+
+class RetrievalCallbackHandler(OpenAICallbackHandler):
+    def __init__(self, embedding_model=None):
+        # super().__init__()
+        self.embedding_model = embedding_model
+        self.retrieval_data = {
+            'queries': [],
+            'query_embeddings': [],
+            'responses': [],
+            'response_embeddings': [],
+            'total_completion_costs': [],
+            'retrieved_contexts': [],
+            'retrieved_context_embeddings': [],
+            'retrieved_context_cosine_similarities': [],
+            'retrieved_context_relevancy_scores': [],
+            'precision_at_ks': []
+        }
+
+    # def on_chain_start(self, serialized, inputs, **kwargs):
+    #     # print("IN CHAIN START")
+    #     # print(inputs)
+    #     # print(kwargs)
+    #     self.query = inputs["query"]
+    #     # embedding = self.embedding_model.embed_query(self.query)
+    #     # self.query_embeddings.append(embedding)
+    #     # print("query embedding", embedding)
+
+    def summarize_system(self):
+        # column_names = [name for name in self.retrieval_data.keys()]
+        # df = pd.DataFrame(self.retrieval_data, columns=column_names)
+
+        # key stats
+        # average precision at each k
+        # total cost
+
+        avg_precisions = np.mean(self.retrieval_data["precision_at_ks"], axis=0)
+        total_cost = np.sum(self.retrieval_data["total_completion_costs"])
+
+        print("Average Precisions at each k: ", avg_precisions)
+        print(f"[WIP] Total System Cost: ${total_cost:.2f}")
+
+    def evaluate_query_and_context(self, query, context):
+        EVALUATION_SYSTEM_MESSAGE = "You will be given a query and a reference text. You must determine whether the reference text contains an answer to the input query. Your response must be binary (0 or 1) and should not contain any text or characters aside from 0 or 1. 0 means that the reference text does not contain an answer to the query. 1 means the reference text contains an answer to the query."
+        QUERY_CONTEXT_PROMPT_TEMPLATE = """Query: {query}
+        Reference: {reference}
+        """
+
+
+        prompt = QUERY_CONTEXT_PROMPT_TEMPLATE.format(
+            query=query,
+            reference=context,
+        )
+        res = openai.ChatCompletion.create(
+            messages=[
+                {"role": "system", "content": EVALUATION_SYSTEM_MESSAGE},
+                {"role": "user", "content": prompt},
+            ],
+            model="gpt-4",
+            temperature=0
+        )
+        response = res["choices"][0]["message"]["content"]
+        return int(response)
+
+    def compute_embedding_price(self, text):
+        pass
+
+    def on_chain_end(self, outputs, **kwargs):
+        self.response = outputs["result"]
+        embedding = self.embedding_model.embed_query(self.response)
+        self.response_embedding = embedding
+        self.completion_cost = self.total_cost
+
+        print("NUM TOKENS IN CHAIN END:", self.total_tokens)
+
+        self.evals = []
+        self.p_at_ks = []
+
+        # compute relevancy score via LLM and precision at k for each k
+        for index, retrieved_context in enumerate(self.document_texts):
+            eval = self.evaluate_query_and_context(self.query, retrieved_context)
+            self.evals.append(eval)
+
+            current_k = index + 1
+            p_at_current_k = sum(self.evals) / current_k
+            self.p_at_ks.append(p_at_current_k)
+
+        row = (self.query, self.query_embedding, self.response, self.response_embedding, self.total_cost, self.document_texts, self.document_embeddings, self.document_scores, self.evals, self.p_at_ks)
+        for key, data in zip(self.retrieval_data, row):
+            self.retrieval_data[key].append(data)
+
+    # def on_llm_start(self, serialized, prompts, **kwargs):
+    #     print("IN LLM START")
+    #     print("PROMPTS", prompts)
+        # print(kwargs)
+
+
+    # def on_llm_end(self, response, **kwargs):
+    #     print("IN LLM END")
+    #     self.total_cost = super().total_cost
+    #     print(self.total_cost)
+
+   
 
 class ChatBot:
-    def __init__(self, chain, name="Arize AI", data_path=None):
+    def __init__(self, name="Arize AI", embedding_model=None, llm=None, memory=None, k=4):
         self.name = name
-        self.data_path = data_path
-        self.chain = chain
+        self.embedding_model = embedding_model
+        self.llm = llm
+        self.memory = memory
+        self.k = k
+        self.vectorstore = None
+
+    def vectorstore_from_url(self, url, persist_directory="./chroma_db"):
+        """
+        Assumes URL is a Gitbook url. Can take a long time. This function can be modified to load
+        other types of data listed here:
+        https://github.com/hwchase17/langchain/tree/04001ff0778d88a644fd20accf2bdaef0ef3258d/langchain/document_loaders
+        """
+        assert self.embedding_model is not None, "Error: there's no embedding_model"
+        print("Loading documents...")
+        documents = GitbookLoader(url, load_all_paths=True).load()
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+        print("Chunking...")
+        document_chunks = text_splitter.split_documents(documents)
+        print("Generating embeddings...")
+        self.vectorstore = Chroma.from_documents(
+            document_chunks, self.embedding_model, persist_directory=persist_directory
+        )
+        self.vectorstore.persist()
+
+    def vectorstore_from_disk(self, persist_directory="./chroma_db", callback=None):
+        assert self.embedding_model is not None, "Error: there's no embedding_model"
+        self.vectorstore = ChromaWrapper(
+            embedding_function=self.embedding_model,
+            persist_directory=persist_directory,
+            callback=callback,
+        )
+
+    def build_chain(self, callbacks=None):
+        assert self.llm is not None, "Error: no LLM"
+        assert self.vectorstore is not None, "Error: no vectorstore loaded"
+        if self.memory:
+            self.qa_chain = ConversationalRetrievalChain.from_llm(
+                self.llm,
+                self.vectorstore.as_retriever(k=self.k),
+                memory=self.memory,
+            )
+        else:
+            self.qa_chain = RetrievalQA.from_llm(
+                llm=self.llm,
+                retriever=self.vectorstore.as_retriever(k=self.k),
+                callbacks=callbacks,
+            )
+
 
     def chat(self):
+        assert self.qa_chain is not None, "Error: no chain"
         while True:
-            user_input = input("You:\n")
-            print("\n\n")
-            output = self.chain.predict(human_input=user_input)
-            print(f"{self.name}: ", output)
+            user_input = input("\n\nYou:\n")
+            output = self.qa_chain.run(user_input)
+            print(f"\n\n{self.name}: \n{output:<5}")
+
+    def debug_function(self):
+        pass
 
 
 def main():
-    pinecone_environment = "us-west1-gcp-free"
-    pinecone.api_key = os.environ["PINECONE_API_KEY"]
-    os.environ["OPENAI_API_KEY"] = "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"
-    openai.api_key = os.environ["OPENAI_API_KEY"]
-    cohere.api_key = os.environ["COHERE_API_KEY"]
-    pinecone.init(api_key=pinecone.api_key, environment=pinecone_environment)
-
-    # yt_url = "https://www.youtube.com/watch?v=ibjUpk9Iagk"
-    # video_id = yt_url.split("watch?v=")[1]
-    # youtube_documents = YoutubeLoader(video_id).load()
-
-    
-
-    # docs_url = "https://docs.arize.com/arize/"
-    # index_name = "arize-docs-ada-002" # the name of the index containing your docs' embeddings, for pinecone
-
-    # embedding_model_name = "text-embedding-ada-002"
-    # embedding_model = OpenAIEmbeddings(model=embedding_model_name)
-    # load and parse data
-    print("Loading data...")
-    # documents = GitbookLoader(docs_url, load_all_paths=True).load()
-    # text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
-    # document_chunks = text_splitter.split_documents(documents)
-    # texts = [chunk.page_content for chunk in document_chunks]
-    
-    # create embeddings for each chunk of text
-    # print("Generating embeddings...")
-    
-    # embedded_documents = embedding_model.embed_documents(texts)
-    # embed_dim = len(embedded_documents[0])
-
-    # create a pinecone index, connect to it, and upload emebddings
-    # print("Uploading embeddings to Pincone...")
-    # pinecone.create_index(index_name, 1536, metric="cosine")
-    # pinecone.Index(index_name)
-    # vectorstore = Pinecone.from_texts(texts, embedding_model, index_name=index_name)
-    # vectorstore = Chroma.from_documents(youtube_documents, embedding_model)
-    string_list_read = []
-    with zipfile.ZipFile('output.zip', 'r') as zip_file:
-        for filename in zip_file.namelist():
-            with zip_file.open(filename, 'r') as file:
-                string = file.read().decode('utf-8')
-                string_list_read.append(string)
-
-    set_trace()
-    # vectorstore = Chroma.from_texts(string_list_read, embedding_model, persist_directory="./chroma_db")
-    # vectorstore.persist() # save to disk
-
-    # load from disk
-    vectorstore = Chroma(embedding_function=embedding_model, persist_directory="./chroma_db")
-    print("Done")
-
-
-    llm_model_name = "gpt-3.5-turbo"
-
-    # llm = ChatOpenAI(temperature=0.2)
-    llm = OpenAI(model_name=llm_model_name, temperature=0)
-
-    # memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-    # qa_chain = ConversationalRetrievalChain.from_llm(
-    #     llm, vectorstore.as_retriever(), memory=memory
+    # openai.api_key = "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" # pretty sure this is jason's, i might have hit the limit rate, lo siento
+    # openai.api_key = (
+    #     "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"  # burch's key
     # )
+    openai.api_key = "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" # my key
+    os.environ["OPENAI_API_KEY"] = openai.api_key
+    # pinecone_environment = "us-west1-gcp-free"
+    # pinecone.api_key = os.environ["PINECONE_API_KEY"]
+    # openai.api_key = os.environ["OPENAI_API_KEY"]
+    # pinecone.init(api_key=pinecone.api_key, environment=pinecone_environment)
 
-    memory = None
-    qa_chain = RetrievalQA.from_llm(llm=llm, retriever=vectorstore.as_retriever())
+    # string_list_read = []
+    # with zipfile.ZipFile('./output.zip', 'r') as zip_file:
+    #     for filename in zip_file.namelist():
+    #         with zip_file.open(filename, 'r') as file:
+    #             string = file.read().decode('utf-8')
+    #             string_list_read.append(string)
 
     # while True:
     #     user_input = input("\n\nYou:\n")
     #     output = qa_chain({"question": user_input})["answer"]
     #     print("\n\nArize Chat Bot: ", output)
-    data = pd.read_csv("arize_docs_questions.csv")
-    answers = []
-    for question in data["Question"]:
-        print("Trying: ", question)
-        answers.append(qa_chain.run(question))
+    # answers = []
+    # for question in data["Question"]:
+    #     print("Trying: ", question)
+    #     answers.append(qa_chain.run(question))
 
-    # chat_bot = ChatBot(qa_chain)
-    # chat_bot.chat()
+    url = "https://docs.arize.com/arize/"
+    embedding_model_name = "text-embedding-ada-002"
+    embedding_model = OpenAIEmbeddings(model=embedding_model_name)
+
+    retrieval_callback_handler = RetrievalCallbackHandler(
+        embedding_model=embedding_model
+    )
+
+    llm_model_name = "gpt-3.5-turbo"
+    llm = OpenAI(
+        model_name=llm_model_name, temperature=0, callbacks=[retrieval_callback_handler]
+    )
+
+    inputs = {
+        "embedding_model": embedding_model,
+        "llm": llm,
+        "k": 4
+    }
+
+    # initialize the chatbot
+    chat_bot = ChatBot(**inputs)
+
+    # documentation chunk vectorstore loading option 1: from disk
+    # path = "/content/drive/MyDrive/Professional/Arize AI/data/chroma_db"
+    path = "./chroma_db"
+    chat_bot.vectorstore_from_disk(path, callback=retrieval_callback_handler)
+
+    # vector store loading option 2: from url (may take a while)
+    # chat_bot.vectorstore_from_url(url)
+
+    # build the question answering retrieval chain
+    chat_bot.build_chain(callbacks=[retrieval_callback_handler])
+
+    sheet_data = pd.read_csv("arize_docs_questions.csv")
+
+    for question in sheet_data["Question"]:
+        print(chat_bot.qa_chain.run(question))
+
+    retrieval_callback_handler.summarize_system()
+
+    print("done")
 
 
 if __name__ == "__main__":
