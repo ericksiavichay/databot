@@ -4,22 +4,14 @@ Inspiration from Arize's chatbot files
 A simple chatbot over a dataset. 
 """
 
-import itertools
-import zipfile
+
 import os
-import time
-import json
-import gzip
-import requests
-import argparse
-from pdb import set_trace
-
-import openai
-import pinecone
-
 from typing import Dict, List, Optional, Tuple
 
+import openai
+
 from langchain.llms import OpenAI
+from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain.chat_models import ChatOpenAI
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.vectorstores import Pinecone, Chroma
@@ -27,102 +19,110 @@ from langchain.memory import ConversationBufferWindowMemory, ConversationBufferM
 from langchain.chains import ConversationalRetrievalChain, RetrievalQA
 from langchain.document_loaders import YoutubeLoader, GitbookLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.callbacks import OpenAICallbackHandler
 
 import pandas as pd
 
-from youtube_transcript_api import YouTubeTranscriptApi as yt
-from youtube_transcript_api.formatters import TextFormatter
-
-# from youtube_transcript_api import YouTubeTranscriptApi as yt
-# from youtube_transcript_api.formatters import TextFormatter
-
-
 class ChromaWrapper(Chroma):
     query_text_to_document_score_tuples = {}
 
-    def __init__(self, callback, **kwargs):
+    def __init__(self, callback=None, **kwargs):
         super().__init__(**kwargs)
         self.callback = callback
 
     def similarity_search_with_score(
         self, query: str, k: int = 4, filter=None, namespace=None
     ):
-        # print("INSIDE WRAPPER SIM SEARCH BY QUERY CALL")
-        # print("WRAPER SIM QUERY:", query)
-        document_score_tuples = super().similarity_search_with_score(
-            query=query,
+        print("INSIDE WRAPPER SIM SEARCH BY QUERY CALL")
+        print("WRAPER SIM QUERY:", query)
+        embedding = self._embedding_function.embed_query(query)
+        document_score_tuples = self.similarity_search_by_vector_with_relevance_scores(
+            embedding=embedding,
             k=k,
             filter=filter,
             namespace=namespace,
         )
-        self.query_text_to_document_score_tuples[query] = document_score_tuples
-        # print(document_score_tuples)
+        # print("WRAPPER SIM SEARCH RETRIEVED DOCUMENTS AND SCORES", document_score_tuples)
+
+        if self.callback:
+            self.callback.query = query
+            self.callback.query_embedding = embedding
+            
+            document_texts = []
+            document_embeddings = []
+            document_scores = []
+            for doc, score in document_score_tuples:
+                document_texts.append(doc.page_content)
+                document_embeddings.append(self._embedding_function.embed_query(doc.page_content))
+                document_scores.append(score)
+
+            self.callback.document_texts = document_texts
+            self.callback.document_embeddings = document_embeddings
+            self.callback.document_scores = document_scores
+
         return document_score_tuples
 
-    
-
-    @property
-    def retrieval_dataframe(self) -> pd.DataFrame:
-        query_texts = []
-        document_texts = []
-        retrieval_ranks = []
-        scores = []
-        for (
-            query_text,
-            document_score_tuples,
-        ) in self.query_text_to_document_score_tuples.items():
-            for retrieval_rank, (document, score) in enumerate(document_score_tuples):
-                query_texts.append(query_text)
-                document_texts.append(document.page_content)
-                retrieval_ranks.append(retrieval_rank)
-                scores.append(score)
-        return pd.DataFrame.from_dict(
-            {
-                "query_text": query_texts,
-                "document_text": document_texts,
-                "retrieval_rank": retrieval_ranks,
-                "score": scores,
-            }
-        )
-
-
 class RetrievalCallbackHandler(OpenAICallbackHandler):
-    def __init__(self, evaluator=None, embedding_model=None):
+    def __init__(self, embedding_model=None):
         # super().__init__()
-        self.evaluator = evaluator
         self.embedding_model = embedding_model
         self.retrieval_data = []  # eg: [query, response, documents, cost, score]
-        self.query_embeddings = []
-        self.response_embeddings = []
-        self.total_cost = 0
 
-    def on_chain_start(self, serialized, inputs, **kwargs):
-        # print("IN CHAIN START")
-        # print(inputs)
-        # print(kwargs)
-        self.query = inputs["query"]
-        # embedding = self.embedding_model.embed_query(self.query)
-        # self.query_embeddings.append(embedding)
-        # print("query embedding", embedding)
+    # def on_chain_start(self, serialized, inputs, **kwargs):
+    #     # print("IN CHAIN START")
+    #     # print(inputs)
+    #     # print(kwargs)
+    #     self.query = inputs["query"]
+    #     # embedding = self.embedding_model.embed_query(self.query)
+    #     # self.query_embeddings.append(embedding)
+    #     # print("query embedding", embedding)
+
+    def evaluate_query_and_context(self, query, context):
+        EVALUATION_SYSTEM_MESSAGE = "You will be given a query and a reference text. You must determine whether the reference text contains an answer to the input query. Your response must be binary (0 or 1) and should not contain any text or characters aside from 0 or 1. 0 means that the reference text does not contain an answer to the query. 1 means the reference text contains an answer to the query."
+        QUERY_CONTEXT_PROMPT_TEMPLATE = """Query: {query}
+        Reference: {reference}
+        """
+
+
+        prompt = QUERY_CONTEXT_PROMPT_TEMPLATE.format(
+            query=query,
+            reference=context,
+        )
+        res = openai.ChatCompletion.create(
+            messages=[
+                {"role": "system", "content": EVALUATION_SYSTEM_MESSAGE},
+                {"role": "user", "content": prompt},
+            ],
+            model="gpt-4",
+            temperature=0
+        )
+        response = res["choices"][0]["message"]["content"]
+        return int(response)
+        # return response["choices"][0]["message"]["content"]
+
+    def compute_embedding_price(self, text):
+        pass
 
     def on_chain_end(self, outputs, **kwargs):
         print("IN CHAIN END")
-        # print(outputs)
-        # self.response = outputs["result"]
-        # embedding = self.embedding_model.embed_query(self.response)
-        # self.response_embeddings.append(embedding)
-        # print("response embedding", embedding)
+        self.response = outputs["result"]
+        embedding = self.embedding_model.embed_query(self.response)
+        self.response_embedding = embedding
+        self.completion_cost = self.total_cost
 
-        # TODO: evaluate the response using the evaluator given the question, answer, retrieved documents, correct answer, etc
+        self.eval = self.evaluate_query_and_context(self.query, self.response)
+        print("EVAL:", self.eval)
 
-    def on_llm_end(self, response, **kwargs):
-        pass
-        print("IN LLM END")
-        self.total_cost = super().total_cost
-        print(self.total_cost)
+        data = (self.query, self.query_embedding, self.response, self.response_embedding, self.document_texts, self.document_embeddings, self.document_scores, self.eval)
+        self.retrieval_data.append(data)
+        print("done")
+
+
+    # def on_llm_end(self, response, **kwargs):
+    #     print("IN LLM END")
+    #     self.total_cost = super().total_cost
+    #     print(self.total_cost)
 
    
 
@@ -176,6 +176,7 @@ class ChatBot:
                 callbacks=callbacks,
             )
 
+
     def chat(self):
         assert self.qa_chain is not None, "Error: no chain"
         while True:
@@ -189,18 +190,18 @@ class ChatBot:
 
 def main():
     # openai.api_key = "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" # pretty sure this is jason's, i might have hit the limit rate, lo siento
-    openai.api_key = (
-        "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"  # burch's key
-    )
-    # openai.api_key = "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" # my key
+    # openai.api_key = (
+    #     "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"  # burch's key
+    # )
+    openai.api_key = "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" # my key
     os.environ["OPENAI_API_KEY"] = openai.api_key
-    pinecone_environment = "us-west1-gcp-free"
+    # pinecone_environment = "us-west1-gcp-free"
     # pinecone.api_key = os.environ["PINECONE_API_KEY"]
     # openai.api_key = os.environ["OPENAI_API_KEY"]
     # pinecone.init(api_key=pinecone.api_key, environment=pinecone_environment)
 
     # string_list_read = []
-    # with zipfile.ZipFile('output.zip', 'r') as zip_file:
+    # with zipfile.ZipFile('./output.zip', 'r') as zip_file:
     #     for filename in zip_file.namelist():
     #         with zip_file.open(filename, 'r') as file:
     #             string = file.read().decode('utf-8')
@@ -248,6 +249,9 @@ def main():
     # build the question answering retrieval chain
     chat_bot.build_chain(callbacks=[retrieval_callback_handler])
     chat_bot.qa_chain.run("How do I grant permissions to import my GBQ table?")
+    chat_bot.qa_chain.run("what is the arize SDK?")
+
+    print("done")
 
 
 if __name__ == "__main__":
