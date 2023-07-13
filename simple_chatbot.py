@@ -9,6 +9,8 @@ import os
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 
+import time
+
 import openai
 
 from langchain.llms import OpenAI
@@ -79,8 +81,53 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
             'retrieved_context_embeddings': [],
             'retrieved_context_cosine_similarities': [],
             'retrieved_context_relevancy_scores': [],
-            'precision_at_ks': []
+            'precision_at_ks': [],
+            'latencies': []
         }
+        self.MODEL_COST_PER_1K_TOKENS = {
+                                # GPT-4 input
+                                "gpt-4": 0.03,
+                                "gpt-4-0314": 0.03,
+                                "gpt-4-0613": 0.03,
+                                "gpt-4-32k": 0.06,
+                                "gpt-4-32k-0314": 0.06,
+                                "gpt-4-32k-0613": 0.06,
+                                # GPT-4 output
+                                "gpt-4-completion": 0.06,
+                                "gpt-4-0314-completion": 0.06,
+                                "gpt-4-0613-completion": 0.06,
+                                "gpt-4-32k-completion": 0.12,
+                                "gpt-4-32k-0314-completion": 0.12,
+                                "gpt-4-32k-0613-completion": 0.12,
+                                # GPT-3.5 input
+                                "gpt-3.5-turbo": 0.0015,
+                                "gpt-3.5-turbo-0301": 0.0015,
+                                "gpt-3.5-turbo-0613": 0.0015,
+                                "gpt-3.5-turbo-16k": 0.003,
+                                "gpt-3.5-turbo-16k-0613": 0.003,
+                                # GPT-3.5 output
+                                "gpt-3.5-turbo-completion": 0.002,
+                                "gpt-3.5-turbo-0301-completion": 0.002,
+                                "gpt-3.5-turbo-0613-completion": 0.002,
+                                "gpt-3.5-turbo-16k-completion": 0.004,
+                                "gpt-3.5-turbo-16k-0613-completion": 0.004,
+                                # Others
+                                "gpt-35-turbo": 0.002,  # Azure OpenAI version of ChatGPT
+                                "text-ada-001": 0.0004,
+                                "ada": 0.0004,
+                                "text-babbage-001": 0.0005,
+                                "babbage": 0.0005,
+                                "text-curie-001": 0.002,
+                                "curie": 0.002,
+                                "text-davinci-003": 0.02,
+                                "text-davinci-002": 0.02,
+                                "code-davinci-002": 0.02,
+                                "ada-finetuned": 0.0016,
+                                "babbage-finetuned": 0.0024,
+                                "curie-finetuned": 0.012,
+                                "davinci-finetuned": 0.12,
+                                }
+
 
     # def on_chain_start(self, serialized, inputs, **kwargs):
     #     # print("IN CHAIN START")
@@ -90,6 +137,57 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
     #     # embedding = self.embedding_model.embed_query(self.query)
     #     # self.query_embeddings.append(embedding)
     #     # print("query embedding", embedding)
+
+    
+
+    def standardize_model_name(self,
+        model_name: str,
+        is_completion: bool = False,
+    ) -> str:
+        """
+        Standardize the model name to a format that can be used in the OpenAI API.
+        Args:
+            model_name: Model name to standardize.
+            is_completion: Whether the model is used for completion or not.
+                Defaults to False.
+
+        Returns:
+            Standardized model name.
+
+        """
+        model_name = model_name.lower()
+        if "ft-" in model_name:
+            return model_name.split(":")[0] + "-finetuned"
+        elif is_completion and (
+            model_name.startswith("gpt-4") or model_name.startswith("gpt-3.5")
+        ):
+            return model_name + "-completion"
+        else:
+            return model_name
+
+
+    def get_openai_token_cost_for_model(self,
+        model_name: str, num_tokens: int, is_completion: bool = False
+    ) -> float:
+        """
+        Get the cost in USD for a given model and number of tokens.
+
+        Args:
+            model_name: Name of the model
+            num_tokens: Number of tokens.
+            is_completion: Whether the model is used for completion or not.
+                Defaults to False.
+
+        Returns:
+            Cost in USD.
+        """
+        model_name = self.standardize_model_name(model_name, is_completion=is_completion)
+        if model_name not in self.MODEL_COST_PER_1K_TOKENS:
+            raise ValueError(
+                f"Unknown model: {model_name}. Please provide a valid OpenAI model name."
+                "Known models are: " + ", ".join(self.MODEL_COST_PER_1K_TOKENS.keys())
+            )
+        return self.MODEL_COST_PER_1K_TOKENS[model_name] * (num_tokens / 1000)
 
     def summarize_system(self):
         # column_names = [name for name in self.retrieval_data.keys()]
@@ -101,9 +199,11 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
 
         avg_precisions = np.mean(self.retrieval_data["precision_at_ks"], axis=0)
         total_cost = np.sum(self.retrieval_data["total_completion_costs"])
+        avg_latency = np.mean(self.retrieval_data["latencies"])
 
         print("Average Precisions at each k: ", avg_precisions)
         print(f"[WIP] Total System Cost: ${total_cost:.2f}")
+        print(f"Average Response Latency: {avg_latency:.2f}s")
 
     def evaluate_query_and_context(self, query, context):
         EVALUATION_SYSTEM_MESSAGE = "You will be given a query and a reference text. You must determine whether the reference text contains an answer to the input query. Your response must be binary (0 or 1) and should not contain any text or characters aside from 0 or 1. 0 means that the reference text does not contain an answer to the query. 1 means the reference text contains an answer to the query."
@@ -130,13 +230,26 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
     def compute_embedding_price(self, text):
         pass
 
+    def on_chain_start(
+            self,
+            serialized,
+            inputs,
+            *,
+            run_id,
+            parent_run_id,
+            tags: Optional[List[str]] = None,
+            metadata,
+            **kwargs,
+    ):
+        self.time_start = time.time()
+
     def on_chain_end(self, outputs, **kwargs):
         self.response = outputs["result"]
+        self.time_end = time.time()
+        self.latency = self.time_end - self.time_start
+        print(f"RESPONSE LATENCY: {self.latency:.2f}")
         embedding = self.embedding_model.embed_query(self.response)
         self.response_embedding = embedding
-        self.completion_cost = self.total_cost
-
-        print("NUM TOKENS IN CHAIN END:", self.total_tokens)
 
         self.evals = []
         self.p_at_ks = []
@@ -150,20 +263,32 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
             p_at_current_k = sum(self.evals) / current_k
             self.p_at_ks.append(p_at_current_k)
 
-        row = (self.query, self.query_embedding, self.response, self.response_embedding, self.total_cost, self.document_texts, self.document_embeddings, self.document_scores, self.evals, self.p_at_ks)
+        row = (self.query, self.query_embedding, self.response, self.response_embedding, self.total_cost, self.document_texts, self.document_embeddings, self.document_scores, self.evals, self.p_at_ks, self.latency)
         for key, data in zip(self.retrieval_data, row):
             self.retrieval_data[key].append(data)
 
     # def on_llm_start(self, serialized, prompts, **kwargs):
     #     print("IN LLM START")
-    #     print("PROMPTS", prompts)
-        # print(kwargs)
+    #     # print("PROMPTS:", prompts[0])
+    #     # print(kwargs)
 
 
-    # def on_llm_end(self, response, **kwargs):
-    #     print("IN LLM END")
-    #     self.total_cost = super().total_cost
-    #     print(self.total_cost)
+    def on_llm_end(self, response, **kwargs):
+        # print("IN LLM END")
+        # print("LLM RESPONSE:", response.generations[0][0].text)
+        # print("LLM PROMPT TOKENS:", response.llm_output["token_usage"]["prompt_tokens"])
+        # print("LLM RESPONSE TOKENS:", response.llm_output["token_usage"]["completion_tokens"])
+        # print("LLM CURRENT RUN TOTAL TOKEN USAGE:", response.llm_output["token_usage"]["total_tokens"])
+        model_name = self.standardize_model_name(response.llm_output.get("model_name", ""))
+        if model_name in self.MODEL_COST_PER_1K_TOKENS:
+            completion_cost = self.get_openai_token_cost_for_model(
+                model_name, response.llm_output["token_usage"]["completion_tokens"], is_completion=True
+            )
+            prompt_cost = self.get_openai_token_cost_for_model(model_name, response.llm_output["token_usage"]["prompt_tokens"])
+            self.total_cost = prompt_cost + completion_cost
+
+        print("LLM NET GENERATION COST:", self.total_cost)
+        # print(response)
 
    
 
@@ -214,7 +339,7 @@ class ChatBot:
         else:
             self.qa_chain = RetrievalQA.from_llm(
                 llm=self.llm,
-                retriever=self.vectorstore.as_retriever(k=self.k),
+                retriever=self.vectorstore.as_retriever(search_kwargs={"k":self.k}),
                 callbacks=callbacks,
             )
 
@@ -274,7 +399,7 @@ def main():
     inputs = {
         "embedding_model": embedding_model,
         "llm": llm,
-        "k": 4
+        "k": 2
     }
 
     # initialize the chatbot
@@ -294,7 +419,10 @@ def main():
     sheet_data = pd.read_csv("arize_docs_questions.csv")
 
     for question in sheet_data["Question"]:
+        print("\n\n")
+        print("ATTEMPTING QUESTION:", question)
         print(chat_bot.qa_chain.run(question))
+        print("\n\n")
 
     retrieval_callback_handler.summarize_system()
 
