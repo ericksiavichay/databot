@@ -188,8 +188,16 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
                 "Known models are: " + ", ".join(self.MODEL_COST_PER_1K_TOKENS.keys())
             )
         return self.MODEL_COST_PER_1K_TOKENS[model_name] * (num_tokens / 1000)
+    
+    def save_system_data(self, path="./data.csv"):
+        column_names = self.retrieval_data.keys()
+        self.df = pd.DataFrame(self.retrieval_data, columns=column_names)
+        self.df.to_csv(path, index=False)
 
-    def summarize_system(self):
+    def load_system_data(self, path):
+        self.df = pd.read_csv(path)
+
+    def summarize_system_data(self):
         # column_names = [name for name in self.retrieval_data.keys()]
         # df = pd.DataFrame(self.retrieval_data, columns=column_names)
 
@@ -197,13 +205,17 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
         # average precision at each k
         # total cost
 
-        avg_precisions = np.mean(self.retrieval_data["precision_at_ks"], axis=0)
-        total_cost = np.sum(self.retrieval_data["total_completion_costs"])
-        avg_latency = np.mean(self.retrieval_data["latencies"])
+        # avg_precisions = np.mean(self.retrieval_data["precision_at_ks"], axis=0)
+        # total_cost = np.sum(self.retrieval_data["total_completion_costs"])
+        # avg_latency = np.mean(self.retrieval_data["latencies"])
 
-        print("Average Precisions at each k: ", avg_precisions)
-        print(f"[WIP] Total System Cost: ${total_cost:.2f}")
-        print(f"Average Response Latency: {avg_latency:.2f}s")
+        # print("Average Precisions at each k: ", avg_precisions)
+        # print(f"[WIP] Total System Cost: ${total_cost:.2f}")
+        # print(f"Average Response Latency: {avg_latency:.2f}s")
+
+        if self.df is not None:
+            print("IN SUMMARIZE SYSTEM DATA")
+
 
     def evaluate_query_and_context(self, query, context):
         EVALUATION_SYSTEM_MESSAGE = "You will be given a query and a reference text. You must determine whether the reference text contains an answer to the input query. Your response must be binary (0 or 1) and should not contain any text or characters aside from 0 or 1. 0 means that the reference text does not contain an answer to the query. 1 means the reference text contains an answer to the query."
@@ -263,9 +275,12 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
             p_at_current_k = sum(self.evals) / current_k
             self.p_at_ks.append(p_at_current_k)
 
+        print("precision @ k's: ", self.p_at_ks)
+
         row = (self.query, self.query_embedding, self.response, self.response_embedding, self.total_cost, self.document_texts, self.document_embeddings, self.document_scores, self.evals, self.p_at_ks, self.latency)
         for key, data in zip(self.retrieval_data, row):
             self.retrieval_data[key].append(data)
+
 
     # def on_llm_start(self, serialized, prompts, **kwargs):
     #     print("IN LLM START")
@@ -278,7 +293,7 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
         # print("LLM RESPONSE:", response.generations[0][0].text)
         # print("LLM PROMPT TOKENS:", response.llm_output["token_usage"]["prompt_tokens"])
         # print("LLM RESPONSE TOKENS:", response.llm_output["token_usage"]["completion_tokens"])
-        # print("LLM CURRENT RUN TOTAL TOKEN USAGE:", response.llm_output["token_usage"]["total_tokens"])
+        print("LLM CURRENT RUN TOTAL TOKEN USAGE:", response.llm_output["token_usage"]["total_tokens"])
         model_name = self.standardize_model_name(response.llm_output.get("model_name", ""))
         if model_name in self.MODEL_COST_PER_1K_TOKENS:
             completion_cost = self.get_openai_token_cost_for_model(
@@ -356,11 +371,11 @@ class ChatBot:
 
 
 def main():
-    # openai.api_key = "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" # pretty sure this is jason's, i might have hit the limit rate, lo siento
+    openai.api_key = "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" # pretty sure this is jason's, i might have hit the limit rate, lo siento
     # openai.api_key = (
     #     "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"  # burch's key
     # )
-    openai.api_key = "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" # my key
+    # openai.api_key = "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" # my key
     os.environ["OPENAI_API_KEY"] = openai.api_key
     # pinecone_environment = "us-west1-gcp-free"
     # pinecone.api_key = os.environ["PINECONE_API_KEY"]
@@ -418,13 +433,21 @@ def main():
 
     sheet_data = pd.read_csv("arize_docs_questions.csv")
 
+
+    chunk_size = 1000
+    chunk_overlap = 0
+    experiment_path = f"./experiment_data/chunk_size{chunk_size}_chunk_overlap{chunk_overlap}.csv"
+
     for question in sheet_data["Question"]:
-        print("\n\n")
         print("ATTEMPTING QUESTION:", question)
         print(chat_bot.qa_chain.run(question))
+        retrieval_callback_handler.save_system_data(experiment_path)
         print("\n\n")
 
-    retrieval_callback_handler.summarize_system()
+    retrieval_callback_handler.save_system_data(experiment_path)
+    # retrieval_callback_handler.summarize_system_data()
+
+    # experiment_data = pd.read_csv(experiment_path)
 
     print("done")
 
