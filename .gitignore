@@ -1,2 +1,4 @@
 .DS_Store
 .chroma
+.conda
+/experiment_data
