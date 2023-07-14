@@ -6,8 +6,10 @@ A simple chatbot over a dataset.
 
 
 import os
+import pickle
 from typing import Dict, List, Optional, Tuple
 import numpy as np
+import config
 
 import time
 
@@ -21,7 +23,7 @@ from langchain.vectorstores import Pinecone, Chroma
 from langchain.memory import ConversationBufferWindowMemory, ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain, RetrievalQA
 from langchain.document_loaders import YoutubeLoader, GitbookLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter, MarkdownTextSplitter, SpacyTextSplitter
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.callbacks import OpenAICallbackHandler
 
@@ -293,7 +295,7 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
         # print("LLM RESPONSE:", response.generations[0][0].text)
         # print("LLM PROMPT TOKENS:", response.llm_output["token_usage"]["prompt_tokens"])
         # print("LLM RESPONSE TOKENS:", response.llm_output["token_usage"]["completion_tokens"])
-        print("LLM CURRENT RUN TOTAL TOKEN USAGE:", response.llm_output["token_usage"]["total_tokens"])
+        # print("LLM CURRENT RUN TOTAL TOKEN USAGE:", response.llm_output["token_usage"]["total_tokens"])
         model_name = self.standardize_model_name(response.llm_output.get("model_name", ""))
         if model_name in self.MODEL_COST_PER_1K_TOKENS:
             completion_cost = self.get_openai_token_cost_for_model(
@@ -302,19 +304,44 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
             prompt_cost = self.get_openai_token_cost_for_model(model_name, response.llm_output["token_usage"]["prompt_tokens"])
             self.total_cost = prompt_cost + completion_cost
 
-        print("LLM NET GENERATION COST:", self.total_cost)
+        # print("LLM NET GENERATION COST:", self.total_cost)
         # print(response)
 
    
 
 class ChatBot:
-    def __init__(self, name="Arize AI", embedding_model=None, llm=None, memory=None, k=4):
+    def __init__(self, name="Arize AI", embedding_model=None, llm=None, memory=None, k=4, TextSplitter=None, chunk_size=2**7):
         self.name = name
         self.embedding_model = embedding_model
         self.llm = llm
         self.memory = memory
         self.k = k
+        self.TextSplitter = TextSplitter
+        self.chunk_size = chunk_size
         self.vectorstore = None
+
+    def vectorstore_from_documents(self, documents, persist_directory="./chroma_db", callback=None):
+        assert self.embedding_model is not None, "Error: there's no embedding model"
+        assert self.TextSplitter is not None, "Error: no text splitter class"
+        text_splitter = self.TextSplitter(chunk_size=self.chunk_size, chunk_overlap=0)
+        print("Chunking...")
+        document_chunks = text_splitter.split_documents(documents)
+        print("Generating embeddings...")
+        time_start = time.time()
+        vs = Chroma.from_documents(
+            document_chunks, self.embedding_model, persist_directory=persist_directory
+        )
+        vs.persist()
+        self.vectorstore = ChromaWrapper(
+            embedding_function=self.embedding_model,
+            persist_directory=persist_directory,
+            callback=callback,
+        )
+        time_end = time.time()
+        elapsed_time = time_end - time_start
+        print(f"Done Generating Embeddings ({elapsed_time:.2f} s)")
+        print("Done")
+
 
     def vectorstore_from_url(self, url, persist_directory="./chroma_db"):
         """
@@ -332,6 +359,7 @@ class ChatBot:
         self.vectorstore = Chroma.from_documents(
             document_chunks, self.embedding_model, persist_directory=persist_directory
         )
+        
         self.vectorstore.persist()
 
     def vectorstore_from_disk(self, persist_directory="./chroma_db", callback=None):
@@ -369,17 +397,65 @@ class ChatBot:
     def debug_function(self):
         pass
 
+def run_experiments(chunk_sizes, text_splitters_dict):
+    """
+    Implementation of https://www.pinecone.io/learn/chunking-strategies/
+    """
+    os.environ["OPENAI_API_KEY"] = config.jason_key
+    with open("raw_arize_docs.pkl", "+rb") as f:
+        documents = pickle.load(f)
+
+    sheet_data = pd.read_csv("arize_docs_questions.csv")
+    
+    # experiments
+    for chunk_size in chunk_sizes:
+        for splitter_class_name in text_splitters_dict:
+            TextSplitter = text_splitters_dict[splitter_class_name]
+            print(f"RUNNING EXPERIMENT: {splitter_class_name}, chunk_size={chunk_size}")
+            embedding_model_name = "text-embedding-ada-002"
+            embedding_model = OpenAIEmbeddings(model=embedding_model_name)
+            retrieval_callback_handler = RetrievalCallbackHandler(
+                embedding_model=embedding_model
+            )
+            llm_model_name = "gpt-3.5-turbo"
+            llm = OpenAI(
+                model_name=llm_model_name, temperature=0, callbacks=[retrieval_callback_handler]
+            )
+
+            inputs = {
+                "embedding_model": embedding_model,
+                "llm": llm,
+                "k": 2,
+                "chunk_size": chunk_size,
+                "TextSplitter": TextSplitter
+            }
+
+            # initialize the chatbot
+            chat_bot = ChatBot(**inputs)
+
+            # create vectorstore from documents, save into separate folders by name
+            chroma_db_name = f"./{splitter_class_name}_chunk_size{chunk_size}"
+            chat_bot.vectorstore_from_documents(documents, persist_directory=chroma_db_name, callback=retrieval_callback_handler)
+
+            # build chain
+            chat_bot.build_chain(callbacks=[retrieval_callback_handler])
+
+            experiment_path = f"./experiment_data/{splitter_class_name}_chunk_size{chunk_size}.csv"
+
+            for question in sheet_data["Question"]:
+                print("ATTEMPTING QUESTION:", question)
+                print(chat_bot.qa_chain.run(question))
+                retrieval_callback_handler.save_system_data(experiment_path)
+                print("\n\n")
+
+
+            print(f"EXPERIMENT FINISHED: saved to {experiment_path}")
+
 
 def main():
-    openai.api_key = "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" # pretty sure this is jason's, i might have hit the limit rate, lo siento
-    # openai.api_key = (
-    #     "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"  # burch's key
-    # )
-    # openai.api_key = "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" # my key
-    os.environ["OPENAI_API_KEY"] = openai.api_key
+    os.environ["OPENAI_API_KEY"] = config.jason_key
     # pinecone_environment = "us-west1-gcp-free"
     # pinecone.api_key = os.environ["PINECONE_API_KEY"]
-    # openai.api_key = os.environ["OPENAI_API_KEY"]
     # pinecone.init(api_key=pinecone.api_key, environment=pinecone_environment)
 
     # string_list_read = []
@@ -445,12 +521,17 @@ def main():
         print("\n\n")
 
     retrieval_callback_handler.save_system_data(experiment_path)
-    # retrieval_callback_handler.summarize_system_data()
-
-    # experiment_data = pd.read_csv(experiment_path)
 
     print("done")
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    chunk_sizes = [2**7, 2**8, 2**9, 2**10]
+    text_splitters_dict = {
+        "RecursiveCharacterTextSplitter": RecursiveCharacterTextSplitter,
+        "MarkdownTextSplitter": MarkdownTextSplitter, 
+        # "SpacyTextSplitter": SpacyTextSplitter
+    }
+
+    run_experiments(chunk_sizes=chunk_sizes, text_splitters_dict=text_splitters_dict)

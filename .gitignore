@@ -2,3 +2,5 @@
 .chroma
 .conda
 /experiment_data
+config.py
+__pycache__/
