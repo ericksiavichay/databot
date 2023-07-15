@@ -43,6 +43,7 @@ from langchain.text_splitter import (
     RecursiveCharacterTextSplitter,
     MarkdownTextSplitter,
     SpacyTextSplitter,
+    CharacterTextSplitter,
 )
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.callbacks import OpenAICallbackHandler
@@ -356,16 +357,16 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
             # Write your data row
             writer.writerow(self.row)
 
-    def save_system_data(self, path="./data.csv"):
-        column_names = self.retrieval_data.keys()
-        self.df = pd.DataFrame(self.retrieval_data, columns=column_names)
-        self.df.to_csv(path, index=False)
+    # def save_system_data(self, path="./data.csv"):
+    #     column_names = self.retrieval_data.keys()
+    #     self.df = pd.DataFrame(self.retrieval_data, columns=column_names)
+    #     self.df.to_csv(path, index=False)
 
-    def load_system_data(self, path):
-        self.df = pd.read_csv(path)
+    # def load_system_data(self, path):
+    #     self.df = pd.read_csv(path)
 
-    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
-    def evaluate_query_and_context(self, query, response, context):
+    @retry(wait=wait_random_exponential(min=1, max=3), stop=stop_after_attempt(3))
+    def evaluate_query_and_context(self, query, context):
         EVALUATION_SYSTEM_MESSAGE = """You will be given a query that a user is asking to an LLM and a reference text that may contain an answer to the user's query either directly or indirectly. Your response must be binary (0 or 1) and should not contain any text or characters aside from 0 or 1. 0 means that the reference text does not contain an answer to the query. 1 means the reference text contains an answer to the query.
         As an example, here is a query, a retrieved context, and what the evaluation should be:
         
@@ -671,6 +672,10 @@ def run_experiments(chunk_sizes, text_splitters_dict, k):
                 persist_directory=chroma_db_name,
                 callback=retrieval_callback_handler,
             )
+            # chat_bot.vectorstore_from_disk(
+            #     "/Users/ericksiavichay/development/arize_chatbot/databot/RecursiveCharacterTextSplitter_chunk_size128",
+            #     callback=retrieval_callback_handler,
+            # )
 
             # build chain
             chat_bot.build_chain(callbacks=[retrieval_callback_handler])
@@ -683,6 +688,7 @@ def run_experiments(chunk_sizes, text_splitters_dict, k):
                 print("ATTEMPTING QUESTION:", question)
                 print(chat_bot.qa_chain.run(question))
                 retrieval_callback_handler.update_system_data(experiment_path)
+                print("QUESTION PROCESSED")
                 print("\n\n")
 
             print(f"EXPERIMENT FINISHED: saved to {experiment_path}")
@@ -768,6 +774,7 @@ if __name__ == "__main__":
     text_splitters_dict = {
         "RecursiveCharacterTextSplitter": RecursiveCharacterTextSplitter,
         "MarkdownTextSplitter": MarkdownTextSplitter,
+        "CharacterTextSplitter": CharacterTextSplitter.from_tiktoken_encoder
         # "SpacyTextSplitter": SpacyTextSplitter
     }
 
