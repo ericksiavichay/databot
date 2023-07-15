@@ -365,10 +365,68 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
         self.df = pd.read_csv(path)
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
-    def evaluate_query_and_context(self, query, context):
-        EVALUATION_SYSTEM_MESSAGE = "You will be given a query and a reference text. You must determine whether the reference text contains an answer to the input query. Your response must be binary (0 or 1) and should not contain any text or characters aside from 0 or 1. 0 means that the reference text does not contain an answer to the query. 1 means the reference text contains an answer to the query."
-        QUERY_CONTEXT_PROMPT_TEMPLATE = """Query: {query}
-        Reference: {reference}
+    def evaluate_query_and_context(self, query, response, context):
+        EVALUATION_SYSTEM_MESSAGE = """You will be given a query that a user is asking to an LLM and a reference text that may contain an answer to the user's query either directly or indirectly. Your response must be binary (0 or 1) and should not contain any text or characters aside from 0 or 1. 0 means that the reference text does not contain an answer to the query. 1 means the reference text contains an answer to the query.
+        As an example, here is a query, a retrieved context, and what the evaluation should be:
+        
+        Query: 
+        <START OF QUERY>
+        What happens if I upload actuals twice?
+        <END OF QUERY>
+        
+        Reference: 
+        <START OF REFERENCE>
+        Sending Data FAQ
+        Delayed Actuals
+        What happens when you have two different models with the same set of prediction IDs?
+        When sending delayed actuals, specify the
+        model_id
+        in your schema to match your actuals to the correct model.
+        Does the Arize Platform look at specific model versions?
+        Delayed actuals are mapped back to predictions via a
+        model_id
+        and
+        prediction_id
+        , regardless of version. This means that if you have the same
+        prediction_id
+        in multiple model versions, the actual will be joined to each row with the matching
+        prediction_id
+        .
+        What happens after I send in actual data?
+        If you send actuals to Arize to log delayed actuals (when preexisting predictions already exist in Arize), Arize will join the delayed actuals with the correlating prediction IDs in the platform at 5 AM UTC daily.
+        However, if you have never logged predictions for your model, you must
+        upload prediction values
+        corresponding to your actuals (using the same prediction ID) to view your model in Arize.
+        <END OF REFERENCE>
+        
+        Expected evaluation
+        This should be 1, since the context contains information that someone would be able to think step by step of what would happen if someone uploads actuals twice. In this case, the context is relevant for this reason since it answers the query indirectly.
+
+        Another example
+        query: What happens if I append 3 to a list of numbers twice?
+
+        context:
+        <START OF REFERENCE>
+        To append numbers to a list in python, use the append() member function like so
+        some_list = [0,3]
+        some_list.append(5)
+
+        now the list looks like [0, 3, 5]
+        <END OF REFERENCE>
+
+        Evaluation:
+        1, since the context contains information that will indirectly answer the question (the answer being, 3 will be duplicated at the end twice)
+        """
+
+        QUERY_CONTEXT_PROMPT_TEMPLATE = """Query: 
+        <START OF QUERY>
+        {query}
+        <END OF QUERY>
+
+        Reference: 
+        <START OF REFERENCE>
+        {reference}
+        <END OF REFERENCE>
         """
 
         prompt = QUERY_CONTEXT_PROMPT_TEMPLATE.format(
@@ -578,6 +636,7 @@ def run_experiments(chunk_sizes, text_splitters_dict, k):
     sheet_data = pd.read_csv("arize_docs_questions.csv")
 
     # experiments
+    start = time.time()
     for chunk_size in chunk_sizes:
         for splitter_class_name in text_splitters_dict:
             TextSplitter = text_splitters_dict[splitter_class_name]
@@ -627,6 +686,9 @@ def run_experiments(chunk_sizes, text_splitters_dict, k):
                 print("\n\n")
 
             print(f"EXPERIMENT FINISHED: saved to {experiment_path}")
+    end = time.time()
+    diff = end - start
+    print(f"FINISHED ALL EXPERIMENTS IN {diff:.2f} s")
 
 
 def main():
