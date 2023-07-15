@@ -12,6 +12,14 @@ import numpy as np
 import config
 import ast
 
+import csv
+
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_random_exponential,
+)
+
 import matplotlib.pyplot as plt
 from collections import defaultdict
 
@@ -199,22 +207,24 @@ class ChromaWrapper(Chroma):
 
 
 class RetrievalCallbackHandler(OpenAICallbackHandler):
-    def __init__(self, embedding_model=None):
+    def __init__(
+        self, embedding_model=None, text_splitter_class_name=None, chunk_size=None
+    ):
         # super().__init__()
         self.embedding_model = embedding_model
-        self.retrieval_data = {
-            "queries": [],
-            "query_embeddings": [],
-            "responses": [],
-            "response_embeddings": [],
-            "total_completion_costs": [],
-            "retrieved_contexts": [],
-            "retrieved_context_embeddings": [],
-            "retrieved_context_cosine_similarities": [],
-            "retrieved_context_relevancy_scores": [],
-            "precision_at_ks": [],
-            "latencies": [],
-        }
+        # self.retrieval_data = {
+        #     "queries": [],
+        #     "query_embeddings": [],
+        #     "responses": [],
+        #     "response_embeddings": [],
+        #     "total_completion_costs": [],
+        #     "retrieved_contexts": [],
+        #     "retrieved_context_embeddings": [],
+        #     "retrieved_context_cosine_similarities": [],
+        #     "retrieved_context_relevancy_scores": [],
+        #     "precision_at_ks": [],
+        #     "latencies": [],
+        # }
         self.MODEL_COST_PER_1K_TOKENS = {
             # GPT-4 input
             "gpt-4": 0.03,
@@ -319,6 +329,33 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
             )
         return self.MODEL_COST_PER_1K_TOKENS[model_name] * (num_tokens / 1000)
 
+    def update_system_data(self, experiment_path):
+        """
+        given an experiment name inside the hdf5 file, append row
+        """
+        columns = [
+            "queries",
+            "query_embeddings",
+            "responses",
+            "response_embeddings",
+            "total_completion_costs",
+            "retrieved_contexts",
+            "retrieved_context_embeddings",
+            "retrieved_context_cosine_similarities",
+            "retrieved_context_relevancy_scores",
+            "precision_at_ks",
+            "latencies",
+        ]
+        with open(experiment_path, "a") as f:
+            writer = csv.writer(f)
+
+            # Check if file is empty to write header
+            if f.tell() == 0:
+                writer.writerow(columns)
+
+            # Write your data row
+            writer.writerow(self.row)
+
     def save_system_data(self, path="./data.csv"):
         column_names = self.retrieval_data.keys()
         self.df = pd.DataFrame(self.retrieval_data, columns=column_names)
@@ -327,29 +364,69 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
     def load_system_data(self, path):
         self.df = pd.read_csv(path)
 
-    def summarize_system_data(self):
-        # column_names = [name for name in self.retrieval_data.keys()]
-        # df = pd.DataFrame(self.retrieval_data, columns=column_names)
+    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
+    def evaluate_query_and_context(self, query, response, context):
+        EVALUATION_SYSTEM_MESSAGE = """You will be given a query that a user is asking to an LLM and a reference text that may contain an answer to the user's query either directly or indirectly. Your response must be binary (0 or 1) and should not contain any text or characters aside from 0 or 1. 0 means that the reference text does not contain an answer to the query. 1 means the reference text contains an answer to the query.
+        As an example, here is a query, a retrieved context, and what the evaluation should be:
+        
+        Query: 
+        <START OF QUERY>
+        What happens if I upload actuals twice?
+        <END OF QUERY>
+        
+        Reference: 
+        <START OF REFERENCE>
+        Sending Data FAQ
+        Delayed Actuals
+        What happens when you have two different models with the same set of prediction IDs?
+        When sending delayed actuals, specify the
+        model_id
+        in your schema to match your actuals to the correct model.
+        Does the Arize Platform look at specific model versions?
+        Delayed actuals are mapped back to predictions via a
+        model_id
+        and
+        prediction_id
+        , regardless of version. This means that if you have the same
+        prediction_id
+        in multiple model versions, the actual will be joined to each row with the matching
+        prediction_id
+        .
+        What happens after I send in actual data?
+        If you send actuals to Arize to log delayed actuals (when preexisting predictions already exist in Arize), Arize will join the delayed actuals with the correlating prediction IDs in the platform at 5 AM UTC daily.
+        However, if you have never logged predictions for your model, you must
+        upload prediction values
+        corresponding to your actuals (using the same prediction ID) to view your model in Arize.
+        <END OF REFERENCE>
+        
+        Expected evaluation
+        This should be 1, since the context contains information that someone would be able to think step by step of what would happen if someone uploads actuals twice. In this case, the context is relevant for this reason since it answers the query indirectly.
 
-        # key stats
-        # average precision at each k
-        # total cost
+        Another example
+        query: What happens if I append 3 to a list of numbers twice?
 
-        # avg_precisions = np.mean(self.retrieval_data["precision_at_ks"], axis=0)
-        # total_cost = np.sum(self.retrieval_data["total_completion_costs"])
-        # avg_latency = np.mean(self.retrieval_data["latencies"])
+        context:
+        <START OF REFERENCE>
+        To append numbers to a list in python, use the append() member function like so
+        some_list = [0,3]
+        some_list.append(5)
 
-        # print("Average Precisions at each k: ", avg_precisions)
-        # print(f"[WIP] Total System Cost: ${total_cost:.2f}")
-        # print(f"Average Response Latency: {avg_latency:.2f}s")
+        now the list looks like [0, 3, 5]
+        <END OF REFERENCE>
 
-        if self.df is not None:
-            print("IN SUMMARIZE SYSTEM DATA")
+        Evaluation:
+        1, since the context contains information that will indirectly answer the question (the answer being, 3 will be duplicated at the end twice)
+        """
 
-    def evaluate_query_and_context(self, query, context):
-        EVALUATION_SYSTEM_MESSAGE = "You will be given a query and a reference text. You must determine whether the reference text contains an answer to the input query. Your response must be binary (0 or 1) and should not contain any text or characters aside from 0 or 1. 0 means that the reference text does not contain an answer to the query. 1 means the reference text contains an answer to the query."
-        QUERY_CONTEXT_PROMPT_TEMPLATE = """Query: {query}
-        Reference: {reference}
+        QUERY_CONTEXT_PROMPT_TEMPLATE = """Query: 
+        <START OF QUERY>
+        {query}
+        <END OF QUERY>
+
+        Reference: 
+        <START OF REFERENCE>
+        {reference}
+        <END OF REFERENCE>
         """
 
         prompt = QUERY_CONTEXT_PROMPT_TEMPLATE.format(
@@ -418,8 +495,8 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
             self.p_at_ks,
             self.latency,
         )
-        for key, data in zip(self.retrieval_data, row):
-            self.retrieval_data[key].append(data)
+
+        self.row = row
 
     # def on_llm_start(self, serialized, prompts, **kwargs):
     #     print("IN LLM START")
@@ -559,6 +636,7 @@ def run_experiments(chunk_sizes, text_splitters_dict, k):
     sheet_data = pd.read_csv("arize_docs_questions.csv")
 
     # experiments
+    start = time.time()
     for chunk_size in chunk_sizes:
         for splitter_class_name in text_splitters_dict:
             TextSplitter = text_splitters_dict[splitter_class_name]
@@ -604,10 +682,13 @@ def run_experiments(chunk_sizes, text_splitters_dict, k):
             for question in sheet_data["Question"]:
                 print("ATTEMPTING QUESTION:", question)
                 print(chat_bot.qa_chain.run(question))
-                retrieval_callback_handler.save_system_data(experiment_path)
+                retrieval_callback_handler.update_system_data(experiment_path)
                 print("\n\n")
 
             print(f"EXPERIMENT FINISHED: saved to {experiment_path}")
+    end = time.time()
+    diff = end - start
+    print(f"FINISHED ALL EXPERIMENTS IN {diff:.2f} s")
 
 
 def main():
@@ -682,12 +763,15 @@ def main():
 
 if __name__ == "__main__":
     # main()
-    chunk_sizes = [2**7, 2**8, 2**9, 2**10]
+    k = 4
+    chunk_sizes = [2**7, 2**8, 2**9, 2**10, 2**11]
     text_splitters_dict = {
         "RecursiveCharacterTextSplitter": RecursiveCharacterTextSplitter,
         "MarkdownTextSplitter": MarkdownTextSplitter,
         # "SpacyTextSplitter": SpacyTextSplitter
     }
 
-    # run_experiments(chunk_sizes=chunk_sizes, text_splitters_dict=text_splitters_dict)
+    run_experiments(
+        chunk_sizes=chunk_sizes, text_splitters_dict=text_splitters_dict, k=k
+    )
     summarize_retrieval_data()
