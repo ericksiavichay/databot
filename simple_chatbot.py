@@ -548,7 +548,7 @@ class ChatBot:
         pass
 
 
-def run_experiments(chunk_sizes, text_splitters_dict):
+def run_experiments(chunk_sizes, text_splitters_dict, k):
     """
     Implementation of https://www.pinecone.io/learn/chunking-strategies/
     """
@@ -578,7 +578,7 @@ def run_experiments(chunk_sizes, text_splitters_dict):
             inputs = {
                 "embedding_model": embedding_model,
                 "llm": llm,
-                "k": 2,
+                "k": k,
                 "chunk_size": chunk_size,
                 "TextSplitter": TextSplitter,
             }
