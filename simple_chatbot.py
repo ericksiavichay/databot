@@ -10,24 +10,150 @@ import pickle
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 import config
+import ast
+
+import matplotlib.pyplot as plt
+from collections import defaultdict
 
 import time
 
 import openai
 
 from langchain.llms import OpenAI
-from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
+from langchain.prompts import (
+    ChatPromptTemplate,
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+)
 from langchain.chat_models import ChatOpenAI
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.vectorstores import Pinecone, Chroma
 from langchain.memory import ConversationBufferWindowMemory, ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain, RetrievalQA
 from langchain.document_loaders import YoutubeLoader, GitbookLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter, MarkdownTextSplitter, SpacyTextSplitter
+from langchain.text_splitter import (
+    RecursiveCharacterTextSplitter,
+    MarkdownTextSplitter,
+    SpacyTextSplitter,
+)
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.callbacks import OpenAICallbackHandler
 
 import pandas as pd
+
+
+def summarize_retrieval_data(dir_path="./experiment_data/"):
+    """
+    Given a path with all experiment information, create charts to summarize data
+    """
+    # Gather the CSV files
+    csv_files = [f for f in os.listdir(dir_path) if f.endswith(".csv")]
+
+    # Initialize a defaultdict to store the data
+    data = defaultdict(list)
+
+    # Iterate over the CSV files, read them and store the data in a dictionary
+    for csv_file in csv_files:
+        # Extract the splitting method and chunk size from the filename
+        # The filename format is {splitting_method}_chunk_size{chunk_size}.csv
+        split_parts = os.path.splitext(csv_file)[0].split("_chunk_size")
+        splitting_method = split_parts[0]
+        chunk_size = int(split_parts[1])
+
+        # Read the CSV file
+        df = pd.read_csv(os.path.join(dir_path, csv_file))
+        df["precision_at_ks"] = df["precision_at_ks"].apply(ast.literal_eval)
+
+        # Compute the mean of precision_at_ks
+        precision_at_ks_mean = np.mean(df["precision_at_ks"].tolist(), axis=0)
+
+        # Add the splitting method and chunk size to the dictionary
+        data["splitting_method"].append(splitting_method)
+        data["chunk_size"].append(chunk_size)
+
+        # Add the mean average precision at i and mean latency to the dictionary for each k
+        for i in range(len(precision_at_ks_mean)):
+            data[f"mean_average_precision_at_{i + 1}"].append(precision_at_ks_mean[i])
+
+        # Add mean latency
+        data["mean_latency"].append(df["latencies"].mean())
+
+    # Create a DataFrame from the data
+    df = pd.DataFrame(data)
+
+    # Get the unique splitting methods and chunk sizes
+    splitting_methods = df["splitting_method"].unique()
+    chunk_sizes = sorted(df["chunk_size"].unique())  # sort chunk sizes
+
+    # Initialize the bar width
+    bar_width = 0.35
+
+    # Iterate over k and create the graphs
+    for i in range(len(precision_at_ks_mean)):
+        # Create first graph with mean average precision at i
+        plt.figure(figsize=(10, 6))
+        for j, splitting_method in enumerate(splitting_methods):
+            # Get the data for this splitting method
+            method_data = df[df["splitting_method"] == splitting_method].sort_values(
+                "chunk_size"
+            )
+
+            # Create the bar
+            plt.bar(
+                np.arange(len(chunk_sizes)) + j * bar_width,
+                method_data[f"mean_average_precision_at_{i + 1}"],
+                bar_width,
+                label=splitting_method,
+            )
+
+        # Set the x-ticks
+        plt.xticks(np.arange(len(chunk_sizes)) + bar_width / 2, chunk_sizes)
+
+        # Set the labels and title
+        plt.xlabel("Chunk Size")
+        plt.ylabel(f"Mean Average Precision at {i + 1}")
+        plt.title(
+            f"Mean Average Precision at {i + 1} by Splitting Method and Chunk Size"
+        )
+
+        # Add a legend
+        plt.legend()
+
+        # Save the plot
+        plt.savefig(os.path.join(dir_path, f"mean_average_precision_at_{i + 1}.png"))
+        plt.close()
+
+    # Create graph with mean latency
+    plt.figure(figsize=(10, 6))
+    for i, splitting_method in enumerate(splitting_methods):
+        # Get the data for this splitting method
+        method_data = df[df["splitting_method"] == splitting_method].sort_values(
+            "chunk_size"
+        )
+
+        # Create the bar
+        plt.bar(
+            np.arange(len(chunk_sizes)) + i * bar_width,
+            method_data["mean_latency"],
+            bar_width,
+            label=splitting_method,
+        )
+
+    # Set the x-ticks
+    plt.xticks(np.arange(len(chunk_sizes)) + bar_width / 2, chunk_sizes)
+
+    # Set the labels and title
+    plt.xlabel("Chunk Size")
+    plt.ylabel("Mean Latency")
+    plt.title("Mean Latency by Splitting Method and Chunk Size")
+
+    # Add a legend
+    plt.legend()
+
+    # Save the plot
+    plt.savefig(os.path.join(dir_path, "mean_latency.png"))
+    plt.close()
+
 
 class ChromaWrapper(Chroma):
     query_text_to_document_score_tuples = {}
@@ -53,13 +179,15 @@ class ChromaWrapper(Chroma):
         if self.callback:
             self.callback.query = query
             self.callback.query_embedding = embedding
-            
+
             document_texts = []
             document_embeddings = []
             document_scores = []
             for doc, score in document_score_tuples:
                 document_texts.append(doc.page_content)
-                document_embeddings.append(self._embedding_function.embed_query(doc.page_content)) # may not have to do this if chroma is set up right
+                document_embeddings.append(
+                    self._embedding_function.embed_query(doc.page_content)
+                )  # may not have to do this if chroma is set up right
                 document_scores.append(score)
 
             self.callback.document_texts = document_texts
@@ -69,67 +197,67 @@ class ChromaWrapper(Chroma):
         # print(document_score_tuples)
         return document_score_tuples
 
+
 class RetrievalCallbackHandler(OpenAICallbackHandler):
     def __init__(self, embedding_model=None):
         # super().__init__()
         self.embedding_model = embedding_model
         self.retrieval_data = {
-            'queries': [],
-            'query_embeddings': [],
-            'responses': [],
-            'response_embeddings': [],
-            'total_completion_costs': [],
-            'retrieved_contexts': [],
-            'retrieved_context_embeddings': [],
-            'retrieved_context_cosine_similarities': [],
-            'retrieved_context_relevancy_scores': [],
-            'precision_at_ks': [],
-            'latencies': []
+            "queries": [],
+            "query_embeddings": [],
+            "responses": [],
+            "response_embeddings": [],
+            "total_completion_costs": [],
+            "retrieved_contexts": [],
+            "retrieved_context_embeddings": [],
+            "retrieved_context_cosine_similarities": [],
+            "retrieved_context_relevancy_scores": [],
+            "precision_at_ks": [],
+            "latencies": [],
         }
         self.MODEL_COST_PER_1K_TOKENS = {
-                                # GPT-4 input
-                                "gpt-4": 0.03,
-                                "gpt-4-0314": 0.03,
-                                "gpt-4-0613": 0.03,
-                                "gpt-4-32k": 0.06,
-                                "gpt-4-32k-0314": 0.06,
-                                "gpt-4-32k-0613": 0.06,
-                                # GPT-4 output
-                                "gpt-4-completion": 0.06,
-                                "gpt-4-0314-completion": 0.06,
-                                "gpt-4-0613-completion": 0.06,
-                                "gpt-4-32k-completion": 0.12,
-                                "gpt-4-32k-0314-completion": 0.12,
-                                "gpt-4-32k-0613-completion": 0.12,
-                                # GPT-3.5 input
-                                "gpt-3.5-turbo": 0.0015,
-                                "gpt-3.5-turbo-0301": 0.0015,
-                                "gpt-3.5-turbo-0613": 0.0015,
-                                "gpt-3.5-turbo-16k": 0.003,
-                                "gpt-3.5-turbo-16k-0613": 0.003,
-                                # GPT-3.5 output
-                                "gpt-3.5-turbo-completion": 0.002,
-                                "gpt-3.5-turbo-0301-completion": 0.002,
-                                "gpt-3.5-turbo-0613-completion": 0.002,
-                                "gpt-3.5-turbo-16k-completion": 0.004,
-                                "gpt-3.5-turbo-16k-0613-completion": 0.004,
-                                # Others
-                                "gpt-35-turbo": 0.002,  # Azure OpenAI version of ChatGPT
-                                "text-ada-001": 0.0004,
-                                "ada": 0.0004,
-                                "text-babbage-001": 0.0005,
-                                "babbage": 0.0005,
-                                "text-curie-001": 0.002,
-                                "curie": 0.002,
-                                "text-davinci-003": 0.02,
-                                "text-davinci-002": 0.02,
-                                "code-davinci-002": 0.02,
-                                "ada-finetuned": 0.0016,
-                                "babbage-finetuned": 0.0024,
-                                "curie-finetuned": 0.012,
-                                "davinci-finetuned": 0.12,
-                                }
-
+            # GPT-4 input
+            "gpt-4": 0.03,
+            "gpt-4-0314": 0.03,
+            "gpt-4-0613": 0.03,
+            "gpt-4-32k": 0.06,
+            "gpt-4-32k-0314": 0.06,
+            "gpt-4-32k-0613": 0.06,
+            # GPT-4 output
+            "gpt-4-completion": 0.06,
+            "gpt-4-0314-completion": 0.06,
+            "gpt-4-0613-completion": 0.06,
+            "gpt-4-32k-completion": 0.12,
+            "gpt-4-32k-0314-completion": 0.12,
+            "gpt-4-32k-0613-completion": 0.12,
+            # GPT-3.5 input
+            "gpt-3.5-turbo": 0.0015,
+            "gpt-3.5-turbo-0301": 0.0015,
+            "gpt-3.5-turbo-0613": 0.0015,
+            "gpt-3.5-turbo-16k": 0.003,
+            "gpt-3.5-turbo-16k-0613": 0.003,
+            # GPT-3.5 output
+            "gpt-3.5-turbo-completion": 0.002,
+            "gpt-3.5-turbo-0301-completion": 0.002,
+            "gpt-3.5-turbo-0613-completion": 0.002,
+            "gpt-3.5-turbo-16k-completion": 0.004,
+            "gpt-3.5-turbo-16k-0613-completion": 0.004,
+            # Others
+            "gpt-35-turbo": 0.002,  # Azure OpenAI version of ChatGPT
+            "text-ada-001": 0.0004,
+            "ada": 0.0004,
+            "text-babbage-001": 0.0005,
+            "babbage": 0.0005,
+            "text-curie-001": 0.002,
+            "curie": 0.002,
+            "text-davinci-003": 0.02,
+            "text-davinci-002": 0.02,
+            "code-davinci-002": 0.02,
+            "ada-finetuned": 0.0016,
+            "babbage-finetuned": 0.0024,
+            "curie-finetuned": 0.012,
+            "davinci-finetuned": 0.12,
+        }
 
     # def on_chain_start(self, serialized, inputs, **kwargs):
     #     # print("IN CHAIN START")
@@ -140,9 +268,8 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
     #     # self.query_embeddings.append(embedding)
     #     # print("query embedding", embedding)
 
-    
-
-    def standardize_model_name(self,
+    def standardize_model_name(
+        self,
         model_name: str,
         is_completion: bool = False,
     ) -> str:
@@ -167,9 +294,8 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
         else:
             return model_name
 
-
-    def get_openai_token_cost_for_model(self,
-        model_name: str, num_tokens: int, is_completion: bool = False
+    def get_openai_token_cost_for_model(
+        self, model_name: str, num_tokens: int, is_completion: bool = False
     ) -> float:
         """
         Get the cost in USD for a given model and number of tokens.
@@ -183,14 +309,16 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
         Returns:
             Cost in USD.
         """
-        model_name = self.standardize_model_name(model_name, is_completion=is_completion)
+        model_name = self.standardize_model_name(
+            model_name, is_completion=is_completion
+        )
         if model_name not in self.MODEL_COST_PER_1K_TOKENS:
             raise ValueError(
                 f"Unknown model: {model_name}. Please provide a valid OpenAI model name."
                 "Known models are: " + ", ".join(self.MODEL_COST_PER_1K_TOKENS.keys())
             )
         return self.MODEL_COST_PER_1K_TOKENS[model_name] * (num_tokens / 1000)
-    
+
     def save_system_data(self, path="./data.csv"):
         column_names = self.retrieval_data.keys()
         self.df = pd.DataFrame(self.retrieval_data, columns=column_names)
@@ -218,13 +346,11 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
         if self.df is not None:
             print("IN SUMMARIZE SYSTEM DATA")
 
-
     def evaluate_query_and_context(self, query, context):
         EVALUATION_SYSTEM_MESSAGE = "You will be given a query and a reference text. You must determine whether the reference text contains an answer to the input query. Your response must be binary (0 or 1) and should not contain any text or characters aside from 0 or 1. 0 means that the reference text does not contain an answer to the query. 1 means the reference text contains an answer to the query."
         QUERY_CONTEXT_PROMPT_TEMPLATE = """Query: {query}
         Reference: {reference}
         """
-
 
         prompt = QUERY_CONTEXT_PROMPT_TEMPLATE.format(
             query=query,
@@ -236,7 +362,7 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
                 {"role": "user", "content": prompt},
             ],
             model="gpt-4",
-            temperature=0
+            temperature=0,
         )
         response = res["choices"][0]["message"]["content"]
         return int(response)
@@ -245,15 +371,15 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
         pass
 
     def on_chain_start(
-            self,
-            serialized,
-            inputs,
-            *,
-            run_id,
-            parent_run_id,
-            tags: Optional[List[str]] = None,
-            metadata,
-            **kwargs,
+        self,
+        serialized,
+        inputs,
+        *,
+        run_id,
+        parent_run_id,
+        tags: Optional[List[str]] = None,
+        metadata,
+        **kwargs,
     ):
         self.time_start = time.time()
 
@@ -279,16 +405,26 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
 
         print("precision @ k's: ", self.p_at_ks)
 
-        row = (self.query, self.query_embedding, self.response, self.response_embedding, self.total_cost, self.document_texts, self.document_embeddings, self.document_scores, self.evals, self.p_at_ks, self.latency)
+        row = (
+            self.query,
+            self.query_embedding,
+            self.response,
+            self.response_embedding,
+            self.total_cost,
+            self.document_texts,
+            self.document_embeddings,
+            self.document_scores,
+            self.evals,
+            self.p_at_ks,
+            self.latency,
+        )
         for key, data in zip(self.retrieval_data, row):
             self.retrieval_data[key].append(data)
-
 
     # def on_llm_start(self, serialized, prompts, **kwargs):
     #     print("IN LLM START")
     #     # print("PROMPTS:", prompts[0])
     #     # print(kwargs)
-
 
     def on_llm_end(self, response, **kwargs):
         # print("IN LLM END")
@@ -296,21 +432,35 @@ class RetrievalCallbackHandler(OpenAICallbackHandler):
         # print("LLM PROMPT TOKENS:", response.llm_output["token_usage"]["prompt_tokens"])
         # print("LLM RESPONSE TOKENS:", response.llm_output["token_usage"]["completion_tokens"])
         # print("LLM CURRENT RUN TOTAL TOKEN USAGE:", response.llm_output["token_usage"]["total_tokens"])
-        model_name = self.standardize_model_name(response.llm_output.get("model_name", ""))
+        model_name = self.standardize_model_name(
+            response.llm_output.get("model_name", "")
+        )
         if model_name in self.MODEL_COST_PER_1K_TOKENS:
             completion_cost = self.get_openai_token_cost_for_model(
-                model_name, response.llm_output["token_usage"]["completion_tokens"], is_completion=True
+                model_name,
+                response.llm_output["token_usage"]["completion_tokens"],
+                is_completion=True,
             )
-            prompt_cost = self.get_openai_token_cost_for_model(model_name, response.llm_output["token_usage"]["prompt_tokens"])
+            prompt_cost = self.get_openai_token_cost_for_model(
+                model_name, response.llm_output["token_usage"]["prompt_tokens"]
+            )
             self.total_cost = prompt_cost + completion_cost
 
         # print("LLM NET GENERATION COST:", self.total_cost)
         # print(response)
 
-   
 
 class ChatBot:
-    def __init__(self, name="Arize AI", embedding_model=None, llm=None, memory=None, k=4, TextSplitter=None, chunk_size=2**7):
+    def __init__(
+        self,
+        name="Arize AI",
+        embedding_model=None,
+        llm=None,
+        memory=None,
+        k=4,
+        TextSplitter=None,
+        chunk_size=2**7,
+    ):
         self.name = name
         self.embedding_model = embedding_model
         self.llm = llm
@@ -320,7 +470,9 @@ class ChatBot:
         self.chunk_size = chunk_size
         self.vectorstore = None
 
-    def vectorstore_from_documents(self, documents, persist_directory="./chroma_db", callback=None):
+    def vectorstore_from_documents(
+        self, documents, persist_directory="./chroma_db", callback=None
+    ):
         assert self.embedding_model is not None, "Error: there's no embedding model"
         assert self.TextSplitter is not None, "Error: no text splitter class"
         text_splitter = self.TextSplitter(chunk_size=self.chunk_size, chunk_overlap=0)
@@ -342,7 +494,6 @@ class ChatBot:
         print(f"Done Generating Embeddings ({elapsed_time:.2f} s)")
         print("Done")
 
-
     def vectorstore_from_url(self, url, persist_directory="./chroma_db"):
         """
         Assumes URL is a Gitbook url. Can take a long time. This function can be modified to load
@@ -359,7 +510,7 @@ class ChatBot:
         self.vectorstore = Chroma.from_documents(
             document_chunks, self.embedding_model, persist_directory=persist_directory
         )
-        
+
         self.vectorstore.persist()
 
     def vectorstore_from_disk(self, persist_directory="./chroma_db", callback=None):
@@ -382,10 +533,9 @@ class ChatBot:
         else:
             self.qa_chain = RetrievalQA.from_llm(
                 llm=self.llm,
-                retriever=self.vectorstore.as_retriever(search_kwargs={"k":self.k}),
+                retriever=self.vectorstore.as_retriever(search_kwargs={"k": self.k}),
                 callbacks=callbacks,
             )
-
 
     def chat(self):
         assert self.qa_chain is not None, "Error: no chain"
@@ -397,6 +547,7 @@ class ChatBot:
     def debug_function(self):
         pass
 
+
 def run_experiments(chunk_sizes, text_splitters_dict):
     """
     Implementation of https://www.pinecone.io/learn/chunking-strategies/
@@ -406,7 +557,7 @@ def run_experiments(chunk_sizes, text_splitters_dict):
         documents = pickle.load(f)
 
     sheet_data = pd.read_csv("arize_docs_questions.csv")
-    
+
     # experiments
     for chunk_size in chunk_sizes:
         for splitter_class_name in text_splitters_dict:
@@ -419,7 +570,9 @@ def run_experiments(chunk_sizes, text_splitters_dict):
             )
             llm_model_name = "gpt-3.5-turbo"
             llm = OpenAI(
-                model_name=llm_model_name, temperature=0, callbacks=[retrieval_callback_handler]
+                model_name=llm_model_name,
+                temperature=0,
+                callbacks=[retrieval_callback_handler],
             )
 
             inputs = {
@@ -427,7 +580,7 @@ def run_experiments(chunk_sizes, text_splitters_dict):
                 "llm": llm,
                 "k": 2,
                 "chunk_size": chunk_size,
-                "TextSplitter": TextSplitter
+                "TextSplitter": TextSplitter,
             }
 
             # initialize the chatbot
@@ -435,19 +588,24 @@ def run_experiments(chunk_sizes, text_splitters_dict):
 
             # create vectorstore from documents, save into separate folders by name
             chroma_db_name = f"./{splitter_class_name}_chunk_size{chunk_size}"
-            chat_bot.vectorstore_from_documents(documents, persist_directory=chroma_db_name, callback=retrieval_callback_handler)
+            chat_bot.vectorstore_from_documents(
+                documents,
+                persist_directory=chroma_db_name,
+                callback=retrieval_callback_handler,
+            )
 
             # build chain
             chat_bot.build_chain(callbacks=[retrieval_callback_handler])
 
-            experiment_path = f"./experiment_data/{splitter_class_name}_chunk_size{chunk_size}.csv"
+            experiment_path = (
+                f"./experiment_data/{splitter_class_name}_chunk_size{chunk_size}.csv"
+            )
 
             for question in sheet_data["Question"]:
                 print("ATTEMPTING QUESTION:", question)
                 print(chat_bot.qa_chain.run(question))
                 retrieval_callback_handler.save_system_data(experiment_path)
                 print("\n\n")
-
 
             print(f"EXPERIMENT FINISHED: saved to {experiment_path}")
 
@@ -487,11 +645,7 @@ def main():
         model_name=llm_model_name, temperature=0, callbacks=[retrieval_callback_handler]
     )
 
-    inputs = {
-        "embedding_model": embedding_model,
-        "llm": llm,
-        "k": 2
-    }
+    inputs = {"embedding_model": embedding_model, "llm": llm, "k": 2}
 
     # initialize the chatbot
     chat_bot = ChatBot(**inputs)
@@ -509,10 +663,11 @@ def main():
 
     sheet_data = pd.read_csv("arize_docs_questions.csv")
 
-
     chunk_size = 1000
     chunk_overlap = 0
-    experiment_path = f"./experiment_data/chunk_size{chunk_size}_chunk_overlap{chunk_overlap}.csv"
+    experiment_path = (
+        f"./experiment_data/chunk_size{chunk_size}_chunk_overlap{chunk_overlap}.csv"
+    )
 
     for question in sheet_data["Question"]:
         print("ATTEMPTING QUESTION:", question)
@@ -530,8 +685,9 @@ if __name__ == "__main__":
     chunk_sizes = [2**7, 2**8, 2**9, 2**10]
     text_splitters_dict = {
         "RecursiveCharacterTextSplitter": RecursiveCharacterTextSplitter,
-        "MarkdownTextSplitter": MarkdownTextSplitter, 
+        "MarkdownTextSplitter": MarkdownTextSplitter,
         # "SpacyTextSplitter": SpacyTextSplitter
     }
 
-    run_experiments(chunk_sizes=chunk_sizes, text_splitters_dict=text_splitters_dict)
+    # run_experiments(chunk_sizes=chunk_sizes, text_splitters_dict=text_splitters_dict)
+    summarize_retrieval_data()
