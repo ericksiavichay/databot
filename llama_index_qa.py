@@ -329,7 +329,7 @@ def plot_precision_graphs(all_data, k, web_title="arize"):
         plt.legend(title="Method", bbox_to_anchor=(1, 1))
         plt.tight_layout()
         plt.savefig(f"./experiment_data/{web_title}/{web_title}_mean_avg_p_at_{i}.png")
-        plt.show()
+        # plt.show()
 
 
 def plot_latency_graphs(all_data, web_title="arize"):
@@ -355,7 +355,7 @@ def plot_latency_graphs(all_data, web_title="arize"):
     plt.legend(title="Method", bbox_to_anchor=(1, 1))
     plt.tight_layout()
     plt.savefig(f"./experiment_data/{web_title}/{web_title}_latency.png")
-    plt.show()
+    # plt.show()
 
 
 def plot_response_evaluation_graphs(all_data, web_title="arize"):
@@ -381,7 +381,7 @@ def plot_response_evaluation_graphs(all_data, web_title="arize"):
     plt.legend(title="Method", bbox_to_anchor=(1, 1))
     plt.tight_layout()
     plt.savefig(f"./experiment_data/{web_title}/{web_title}_evaluation.png")
-    plt.show()
+    # plt.show()
 
 
 @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
