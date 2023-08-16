@@ -426,7 +426,7 @@ def get_transformation_query_engine(index, name, k):
         return hyde_query_engine
 
     elif name == "multistep":
-        gpt4 = OpenAI(temperature=0, model="gpt-4")
+        gpt4 = OpenAI(temperature=0.6, model="gpt-4")
         service_context_gpt4 = ServiceContext.from_defaults(llm=gpt4)
 
         step_decompose_transform = StepDecomposeQueryTransform(
@@ -435,7 +435,7 @@ def get_transformation_query_engine(index, name, k):
 
         multi_query_engine = MultiStepQueryEngine(
             query_engine=index.as_query_engine(
-                service_context=service_context_gpt4, similarity_top_k=3
+                service_context=service_context_gpt4, similarity_top_k=k
             ),
             query_transform=step_decompose_transform,
             index_summary="documentation",  # llama index isn't really clear on how this works
