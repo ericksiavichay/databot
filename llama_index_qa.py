@@ -1,6 +1,7 @@
 """
 Llama Index implementation of a chatbot
 """
+from sklearn.metrics import ndcg_score
 from ast import List
 from tenacity import (
     retry,
@@ -321,7 +322,65 @@ def compute_mean_precisions(df):
     return mean_precisions
 
 
-def plot_precision_graphs(all_data, k, web_title="arize", show=True):
+def plot_mrr_graphs(all_data, k, save_dir="./", show=True):
+    for i in range(1, k + 1):
+        plt.figure()
+
+        mrrs_dict = {}
+        for chunk_size, method_data in all_data.items():
+            for method, df in method_data.items():
+                if method == "multistep":
+                    continue
+                mrr_i = (1 / df[f"rank_at_{i}"]).mean()
+                if method not in mrrs_dict:
+                    mrrs_dict[method] = {}
+                mrrs_dict[method][chunk_size] = mrr_i
+
+        # Convert the mean_evaluations_dict to a DataFrame for easier plotting
+        df_mrrs = pd.DataFrame.from_dict(mrrs_dict)
+
+        # Plot the grouped bar graph
+        df_mrrs.plot(kind="bar", width=0.8, figsize=(10, 6))
+        plt.xlabel("Chunk Size")
+        plt.ylabel(f"MRR @ {i}")
+        plt.title(f"MRR @ {i} for Different Chunk Sizes and Methods")
+        plt.legend(title="Method", bbox_to_anchor=(1, 1))
+        plt.tight_layout()
+        plt.savefig(f"{save_dir}/mrr_at_{i}.png")
+        if show:
+            plt.show()
+
+
+def plot_ndcg_graphs(all_data, k, save_dir="./", show=True):
+    for i in range(1, k + 1):
+        plt.figure()
+
+        average_ndcgs_dict = {}
+        for chunk_size, method_data in all_data.items():
+            for method, df in method_data.items():
+                if method == "multistep":
+                    continue
+                average_ndcg_i = df[f"ndcg_at_{i}"].mean()
+                if method not in average_ndcgs_dict:
+                    average_ndcgs_dict[method] = {}
+                average_ndcgs_dict[method][chunk_size] = average_ndcg_i
+
+        # Convert the mean_evaluations_dict to a DataFrame for easier plotting
+        df_average_ndcgs = pd.DataFrame.from_dict(average_ndcgs_dict)
+
+        # Plot the grouped bar graph
+        df_average_ndcgs.plot(kind="bar", width=0.8, figsize=(10, 6))
+        plt.xlabel("Chunk Size")
+        plt.ylabel(f"Average NDCG @ {i}")
+        plt.title(f"Average NDCG @ {i} for Different Chunk Sizes and Methods")
+        plt.legend(title="Method", bbox_to_anchor=(1, 1))
+        plt.tight_layout()
+        plt.savefig(f"{save_dir}/average_ndcg_at_{i}.png")
+        if show:
+            plt.show()
+
+
+def plot_precision_graphs(all_data, k, save_dir="./", show=True):
     for i in range(1, k + 1):
         plt.figure()
 
@@ -347,12 +406,12 @@ def plot_precision_graphs(all_data, k, web_title="arize", show=True):
         plt.title(f"MACP @ {i} Different Chunk Sizes and Methods")
         plt.legend(title="Method", bbox_to_anchor=(1, 1))
         plt.tight_layout()
-        plt.savefig(f"./experiment_data/{web_title}/{web_title}_mean_avg_p_at_{i}.png")
+        plt.savefig(f"{save_dir}/mean_avg_p_at_{i}.png")
         if show:
             plt.show()
 
 
-def plot_latency_graphs(all_data, web_title="arize", show=True):
+def plot_latency_graphs(all_data, save_dir="./", show=True):
     # Create an empty dictionary to store the mean latency for each method and chunk size
     mean_latency_dict = {}
 
@@ -374,12 +433,12 @@ def plot_latency_graphs(all_data, web_title="arize", show=True):
     plt.title("Mean Latency for Different Chunk Sizes and Methods")
     plt.legend(title="Method", bbox_to_anchor=(1, 1))
     plt.tight_layout()
-    plt.savefig(f"./experiment_data/{web_title}/{web_title}_latency.png")
+    plt.savefig(f"{save_dir}/latency.png")
     if show:
         plt.show()
 
 
-def plot_response_evaluation_graphs(all_data, web_title="arize", show=True):
+def plot_response_evaluation_graphs(all_data, save_dir="./", show=True):
     # Create an empty dictionary to store the mean evaluations for each method and chunk size
     mean_evaluations_dict = {}
 
@@ -401,10 +460,17 @@ def plot_response_evaluation_graphs(all_data, web_title="arize", show=True):
     plt.title("Mean Response Evaluation for Different Chunk Sizes and Methods")
     plt.legend(title="Method", bbox_to_anchor=(1, 1))
     plt.tight_layout()
-    plt.savefig(f"./experiment_data/{web_title}/{web_title}_evaluation.png")
+    plt.savefig(f"{save_dir}/evaluation.png")
 
     if show:
         plt.show()
+
+
+def plot_graphs(*args, **kwargs):
+    plot_latency_graphs(args, kwargs)
+    plot_precision_graphs(args, kwargs)
+    plot_ndcg_graphs(args, kwargs)
+    plot_mrr_graphs(args, kwargs)
 
 
 @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
@@ -418,17 +484,21 @@ def evaluate_query_and_retrieved_context(
             query=query,
             context=context,
         )
-        response = openai.ChatCompletion.create(
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You can only output the words YES or NO.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            model=model_name,
-            temperature=0.6,
-        )
+        try:
+            response = openai.ChatCompletion.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You can only output the words YES or NO.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                model=model_name,
+                temperature=0.6,
+            )
+        except:
+            print("EVALUATION FAILED. RETRYING AFTER 60 s")
+            time.sleep(61)
         eval = response["choices"][0]["message"]["content"]
         evals.append(eval)
     return evals
@@ -448,7 +518,7 @@ def get_transformation_query_engine(index, name, k):
     if name == "original_rerank":
         cohere_rerank = CohereRerank(api_key=cohere.api_key, top_n=k)
         service_context = ServiceContext.from_defaults(
-            llm=OpenAI(temperature=0.6, model_name="gpt-4")
+            llm=OpenAI(temperature=0.6, model="gpt-4")
         )
         query_engine = index.as_query_engine(
             similarity_top_k=k * 2,
@@ -459,7 +529,7 @@ def get_transformation_query_engine(index, name, k):
         return query_engine
     elif name == "hyde":
         service_context = ServiceContext.from_defaults(
-            llm=OpenAI(temperature=0.6, model_name="gpt-4")
+            llm=OpenAI(temperature=0.6, model="gpt-4")  # change to model
         )
         query_engine = index.as_query_engine(
             similarity_top_k=k, response_mode="compact", service_context=service_context
@@ -473,7 +543,7 @@ def get_transformation_query_engine(index, name, k):
         cohere_rerank = CohereRerank(api_key=cohere.api_key, top_n=k)
 
         service_context = ServiceContext.from_defaults(
-            llm=OpenAI(temperature=0.6, model_name="gpt-4")
+            llm=OpenAI(temperature=0.6, model="gpt-4")
         )
         query_engine = index.as_query_engine(
             similarity_top_k=k * 2,
@@ -508,16 +578,12 @@ def get_transformation_query_engine(index, name, k):
         return
 
 
-@retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
-async def aquery(engine, query, index):
-    try:
-        print(f"TRYING REQUEST {index}")
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, engine.query, query)
-        return response
+def get_rank(evals):
+    for i, eval in enumerate(evals):
+        if eval == 1:
+            return i + 1
 
-    except:
-        print(f"REQUEST {index} FAILED. RETRYING")
+    return np.inf
 
 
 def run_experiments(
@@ -547,7 +613,7 @@ def run_experiments(
         engines = {}
         # query cosine similarity to nodes engine
         service_context = ServiceContext.from_defaults(
-            llm=OpenAI(temperature=0.6, model_name="gpt-4")
+            llm=OpenAI(temperature=0.6, model="gpt-4")
         )
         query_engine = index.as_query_engine(
             similarity_top_k=k,
@@ -555,11 +621,6 @@ def run_experiments(
             service_context=service_context,
         )  # response mode can also be parameterized
         engines["original"] = query_engine
-
-        if rerank:
-            cohere_rerank = CohereRerank(api_key=cohere.api_key, top_n=k)
-
-            engines["original_rerank"] = query_engine
 
         # create different query transformation engines
         for name in query_transformations:
@@ -613,7 +674,7 @@ def run_experiments(
                     source_node.node.get_content()
                     for source_node in response.source_nodes
                 ]
-                scores = [source_node.score for source_node in response.source_node]
+                scores = [source_node.score for source_node in response.source_nodes]
                 evals = evaluate_query_and_retrieved_context(
                     query,
                     contexts,
@@ -635,13 +696,22 @@ def run_experiments(
                     for i in range(1, k + 1)
                 ]
 
+                ndcgis = [
+                    ndcg_score([formatted_evals], [scores], k=i)
+                    for i in range(1, k + 1)
+                ]
+
+                ranki = [get_rank(formatted_evals[:i]) for i in range(1, k + 1)]
+
                 # get the evaluation of the response
                 # res_eval = format_evals([evaluator.evaluate(query, response)]) # don't need this for now
 
                 row = (
-                    [query, response]
+                    [query, response.response]
                     + cpis
                     + acpk
+                    + ndcgis
+                    + ranki
                     + formatted_evals
                     # + res_eval
                     + [response_latency]
@@ -655,6 +725,8 @@ def run_experiments(
             ["query", "response"]
             + [f"context_precision_at_{i}" for i in range(1, k + 1)]
             + [f"average_context_precision_at_{i}" for i in range(1, k + 1)]
+            + [f"ndcg_at_{i}" for i in range(1, k + 1)]
+            + [f"rank_at_{i}" for i in range(1, k + 1)]
             + [f"context_{i}_evaluation" for i in range(1, k + 1)]
             + ["response_latency"]
             + [f"retrieved_context_{i}" for i in range(1, k + 1)]
@@ -697,23 +769,17 @@ def main():
         documents = pickle.load(file)
 
     chunk_sizes = [
-        2000,
-        # 2500,
+        500,
+        1000,
+        2500,
     ]  # change this, perhaps experiment from 500 to 3000 in increments of 500
     k = 5  # num documents to retrieve
 
-    # use direct call to openai instead, leaving here incase needed in the futre
-    # llm_predictor = LLMPredictor(llm=OpenAI(temperature=0, model_name="gpt-4"))
-    # service_context = ServiceContext.from_defaults(llm_predictor=llm_predictor)
-    # evaluator = QueryResponseEvaluator(service_context=service_context)
-
-    # query transformers
-    # transformations = ["hyde", "multistep"] # ignore this one for now
-    transformations = ["original_rerank", "hyde", "hyde_rerank"]
+    transformations = ["original_rerank"]
 
     all_data = run_experiments(
         documents,
-        questions[:5],
+        questions[100:110],
         chunk_sizes,
         transformations,
         k,
@@ -722,14 +788,12 @@ def main():
     )
 
     # save data to disk
-    save_dir = f"./experiment_data/{web_title}/"
+    save_dir = f"./experiment_data/{web_title}_small/"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     with open(f"{save_dir}/{web_title}_all_data.pkl", "wb") as f:
         pickle.dump(all_data, f)
-    plot_precision_graphs(all_data, k, web_title, show=False)
-    plot_latency_graphs(all_data, web_title, show=False)
-    # plot_response_evaluation_graphs(all_data, web_title) # work in progress
+    plot_graphs(all_data, k, save_dir, show=False)
 
 
 program_start = time.time()
