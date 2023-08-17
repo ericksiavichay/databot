@@ -7,8 +7,10 @@ from tenacity import (
     stop_after_attempt,
     wait_random_exponential,
 )
-
+import cohere
 from concurrent.futures import ThreadPoolExecutor
+
+from llama_index.indices.postprocessor.cohere_rerank import CohereRerank
 
 import config
 import pickle
@@ -54,7 +56,7 @@ from llama_index.evaluation import QueryResponseEvaluator
 openai.api_key = (
     config.jason_key
 )  # replace with the string containing the API key if needed
-
+cohere.api_key = config.erick_cohere_key
 EVALUATION_SYSTEM_MESSAGE = "You will be given a query and a reference text. You must determine whether the reference text contains an answer to the input query. Your response must be binary (NO or YES) and should not contain any text or characters aside from NO or YES. NO means that the reference text does not contain an answer to the query. YES means the reference text contains an answer to the query."
 QUERY_CONTEXT_PROMPT_TEMPLATE = """# Query: {query}
 
@@ -443,7 +445,19 @@ def format_evals(evals):
 
 
 def get_transformation_query_engine(index, name, k):
-    if name == "hyde":
+    if name == "original_rerank":
+        cohere_rerank = CohereRerank(api_key=cohere.api_key, top_n=k)
+        service_context = ServiceContext.from_defaults(
+            llm=OpenAI(temperature=0.6, model_name="gpt-4")
+        )
+        query_engine = index.as_query_engine(
+            similarity_top_k=k * 2,
+            response_mode="compact",  # response mode can also be parameterized
+            service_context=service_context,
+            node_postprocessors=[cohere_rerank],
+        )
+        return query_engine
+    elif name == "hyde":
         service_context = ServiceContext.from_defaults(
             llm=OpenAI(temperature=0.6, model_name="gpt-4")
         )
@@ -454,6 +468,23 @@ def get_transformation_query_engine(index, name, k):
         hyde_query_engine = TransformQueryEngine(query_engine, hyde)
 
         return hyde_query_engine
+
+    elif name == "hyde_rerank":
+        cohere_rerank = CohereRerank(api_key=cohere.api_key, top_n=k)
+
+        service_context = ServiceContext.from_defaults(
+            llm=OpenAI(temperature=0.6, model_name="gpt-4")
+        )
+        query_engine = index.as_query_engine(
+            similarity_top_k=k * 2,
+            response_mode="compact",
+            service_context=service_context,
+            node_postprocessors=[cohere_rerank],
+        )
+        hyde = HyDEQueryTransform(include_original=True)
+        hyde_rerank_query_engine = TransformQueryEngine(query_engine, hyde)
+
+        return hyde_rerank_query_engine
 
     elif name == "multistep":
         gpt4 = OpenAI(temperature=0.6, model="gpt-4")
@@ -489,86 +520,11 @@ async def aquery(engine, query, index):
         print(f"REQUEST {index} FAILED. RETRYING")
 
 
-async def process_query(engine, name, query, index, semaphore, k):
-    async with semaphore:
-        print("-" * 50)
-        time_start = time.time()
-        response = await aquery(engine, query, index)
-        time_end = time.time()
-        response_latency = time_end - time_start
-        print(f"{name} RESPONSE: ", response, "\n")
-        print(f"LATENCY: {response_latency:.2f}", "\n")
-
-        # special case if the query transformation is the multistep
-        # only log latency, response evaluation
-        # if name == "multistep":
-        #     res_eval = format_evals([evaluator.evaluate(query, response)])
-        #     print(f"{name} EVAL: ", res_eval, "\n")
-        #     row = [query, response, res_eval[0], response_latency]
-        #     query_transformation_data[name].append(row)
-
-        #     continue
-
-        # evals = evaluator.evaluate_source_nodes(
-        #     query, response
-        # )  # evaluates if the retrieved nodes contain an answer to the query
-        contexts = [
-            source_node.node.get_content() for source_node in response.source_nodes
-        ]
-        evals = evaluate_query_and_retrieved_context(
-            query,
-            contexts,
-            "gpt-4",
-            evaluation_template=JASON_INIT_EVALUATION_SYSTEM_MESSAGE,
-        )
-        formatted_evals = format_evals(evals)
-
-        print("CONTEXT EVALS: ", formatted_evals)
-
-        # context precision at i
-        cpis = [compute_precision_at_i(formatted_evals, i) for i in range(1, k + 1)]
-
-        # average context precision at k for this query
-        acpk = [
-            compute_average_precision_at_i(formatted_evals, cpis, i)
-            for i in range(1, k + 1)
-        ]
-
-        # get the evaluation of the response
-        # res_eval = format_evals([evaluator.evaluate(query, response)]) # don't need this for now
-
-        row = (
-            [query, response]
-            + cpis
-            + acpk
-            + formatted_evals
-            # + res_eval
-            + [response_latency]
-            + contexts
-        )
-        print("-" * 50)
-
-        return row
-
-
-async def process_queries(engine, name, queries, k, batch_size=50):
-    """
-    Async function to process a queries and get other information.
-
-    Returns a list of rows, where the row contains processed information
-    """
-    semaphore = asyncio.Semaphore(batch_size)
-    tasks = [
-        process_query(engine, name, query, index + 1, semaphore, k)
-        for index, query in enumerate(queries)
-    ]
-    return await asyncio.gather(*tasks)
-
-
 def run_experiments(
     documents, queries, chunk_sizes, query_transformations, k, web_title, rerank=False
 ):
     all_data = {}
+
     for chunk_size in chunk_sizes:
         print(f"PARSING WITH CHUNK SIZE {chunk_size}")
         persist_dir = f"./indices/{web_title}_{chunk_size}"
@@ -594,9 +550,16 @@ def run_experiments(
             llm=OpenAI(temperature=0.6, model_name="gpt-4")
         )
         query_engine = index.as_query_engine(
-            similarity_top_k=k, response_mode="compact", service_context=service_context
+            similarity_top_k=k,
+            response_mode="compact",
+            service_context=service_context,
         )  # response mode can also be parameterized
         engines["original"] = query_engine
+
+        if rerank:
+            cohere_rerank = CohereRerank(api_key=cohere.api_key, top_n=k)
+
+            engines["original_rerank"] = query_engine
 
         # create different query transformation engines
         for name in query_transformations:
@@ -650,6 +613,7 @@ def run_experiments(
                     source_node.node.get_content()
                     for source_node in response.source_nodes
                 ]
+                scores = [source_node.score for source_node in response.source_node]
                 evals = evaluate_query_and_retrieved_context(
                     query,
                     contexts,
@@ -736,7 +700,7 @@ def main():
         2000,
         # 2500,
     ]  # change this, perhaps experiment from 500 to 3000 in increments of 500
-    k = 4  # num documents to retrieve
+    k = 5  # num documents to retrieve
 
     # use direct call to openai instead, leaving here incase needed in the futre
     # llm_predictor = LLMPredictor(llm=OpenAI(temperature=0, model_name="gpt-4"))
@@ -745,10 +709,16 @@ def main():
 
     # query transformers
     # transformations = ["hyde", "multistep"] # ignore this one for now
-    transformations = []
+    transformations = ["original_rerank", "hyde", "hyde_rerank"]
 
     all_data = run_experiments(
-        documents, questions[:5], chunk_sizes, transformations, k, web_title
+        documents,
+        questions[:5],
+        chunk_sizes,
+        transformations,
+        k,
+        web_title,
+        rerank=True,
     )
 
     # save data to disk
