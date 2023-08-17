@@ -3,3 +3,4 @@ tenacity
 matplotlib
 lxml
 cohere
+scikit-learn
