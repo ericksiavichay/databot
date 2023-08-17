@@ -2,3 +2,4 @@ llama-index
 tenacity
 matplotlib
 lxml
+cohere
