@@ -1,11 +1,14 @@
 """
 Llama Index implementation of a chatbot
 """
+from ast import List
 from tenacity import (
     retry,
     stop_after_attempt,
     wait_random_exponential,
 )
+
+from concurrent.futures import ThreadPoolExecutor
 
 import config
 import pickle
@@ -19,6 +22,10 @@ from llama_index.indices.query.query_transform.base import StepDecomposeQueryTra
 
 
 from llama_index import (
+    ListIndex,
+    QuestionAnswerPrompt,
+    RefinePrompt,
+    StorageContext,
     download_loader,
     TreeIndex,
     VectorStoreIndex,
@@ -26,6 +33,7 @@ from llama_index import (
     LLMPredictor,
     ServiceContext,
     Response,
+    load_index_from_storage,
 )
 
 from llama_index.llms import OpenAI
@@ -53,6 +61,23 @@ QUERY_CONTEXT_PROMPT_TEMPLATE = """# Query: {query}
 # Reference: {reference}
 
 # Binary: """
+
+JASON_INIT_EVALUATION_SYSTEM_MESSAGE = """
+    You are comparing a reference text to a question and trying to determine if the reference text contains information relevant to answering the question. Here is the data:
+    [BEGIN DATA]
+    ************
+    [Question]: {query}
+    ************
+    [Reference text]: {context}
+    [END DATA]
+    
+    Compare the Question above to the Reference text. You must determine whether the Reference text contains information that can answer the Question. 
+    Please focus on if the very specific question can be answered by the information in the Reference text.
+    Your response must be a single word, either "Yes" for relevant or "No" for irrelevant,
+    and should not contain any text or characters aside from that word. 
+    "No" means that the reference text does not contain an answer to the query.
+    "Yes" means the reference text contains an answer to the query.
+"""
 
 questions = [
     "How do I use the SDK to upload a ranking model?",
@@ -228,16 +253,6 @@ questions = [
     "Do you only support SHAP for feature importance?",
 ]
 
-questions_small = [
-    "How do I use the SDK to upload a ranking model?",
-    "What drift metrics are supported in Arize?",
-    # "Does Arize support batch models?",
-    # "Does Arize support training data?",
-    # "How do I configure a threshold if my data has seasonality trends?",
-    # "How are clusters in the UMAP calculated? When are the clusters refreshed?",
-    # "How does Arize calculate AUC?",
-]
-
 
 def get_urls(base_url):
     if not base_url.endswith("/"):
@@ -285,6 +300,8 @@ def compute_precision_at_i(eval_scores, i):
 
 
 def compute_average_precision_at_i(evals, cpis, i):
+    if np.sum(evals[:i]) == 0:
+        return 0
     subset = cpis[:i]
     return (np.array(evals[:i]) @ np.array(subset)) / np.sum(evals[:i])
 
@@ -302,7 +319,7 @@ def compute_mean_precisions(df):
     return mean_precisions
 
 
-def plot_precision_graphs(all_data, k, web_title="arize"):
+def plot_precision_graphs(all_data, k, web_title="arize", show=True):
     for i in range(1, k + 1):
         plt.figure()
 
@@ -329,10 +346,11 @@ def plot_precision_graphs(all_data, k, web_title="arize"):
         plt.legend(title="Method", bbox_to_anchor=(1, 1))
         plt.tight_layout()
         plt.savefig(f"./experiment_data/{web_title}/{web_title}_mean_avg_p_at_{i}.png")
-        # plt.show()
+        if show:
+            plt.show()
 
 
-def plot_latency_graphs(all_data, web_title="arize"):
+def plot_latency_graphs(all_data, web_title="arize", show=True):
     # Create an empty dictionary to store the mean latency for each method and chunk size
     mean_latency_dict = {}
 
@@ -355,10 +373,11 @@ def plot_latency_graphs(all_data, web_title="arize"):
     plt.legend(title="Method", bbox_to_anchor=(1, 1))
     plt.tight_layout()
     plt.savefig(f"./experiment_data/{web_title}/{web_title}_latency.png")
-    # plt.show()
+    if show:
+        plt.show()
 
 
-def plot_response_evaluation_graphs(all_data, web_title="arize"):
+def plot_response_evaluation_graphs(all_data, web_title="arize", show=True):
     # Create an empty dictionary to store the mean evaluations for each method and chunk size
     mean_evaluations_dict = {}
 
@@ -381,24 +400,32 @@ def plot_response_evaluation_graphs(all_data, web_title="arize"):
     plt.legend(title="Method", bbox_to_anchor=(1, 1))
     plt.tight_layout()
     plt.savefig(f"./experiment_data/{web_title}/{web_title}_evaluation.png")
-    # plt.show()
+
+    if show:
+        plt.show()
 
 
 @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
-def evaluate_query_and_retrieved_context(query: str, contexts, model_name: str) -> str:
+def evaluate_query_and_retrieved_context(
+    query: str, contexts, model_name: str, evaluation_template: str
+) -> str:
     evals = []
 
     for context in contexts:
-        prompt = QUERY_CONTEXT_PROMPT_TEMPLATE.format(
+        prompt = evaluation_template.format(
             query=query,
-            reference=context,
+            context=context,
         )
         response = openai.ChatCompletion.create(
             messages=[
-                {"role": "system", "content": EVALUATION_SYSTEM_MESSAGE},
+                {
+                    "role": "system",
+                    "content": "You can only output the words YES or NO.",
+                },
                 {"role": "user", "content": prompt},
             ],
             model=model_name,
+            temperature=0.6,
         )
         eval = response["choices"][0]["message"]["content"]
         evals.append(eval)
@@ -408,7 +435,7 @@ def evaluate_query_and_retrieved_context(query: str, contexts, model_name: str) 
 def format_evals(evals):
     evals_as_int = []
     for eval in evals:
-        if eval == "YES":
+        if eval.lower() == "yes":
             evals_as_int.append(1)
         else:
             evals_as_int.append(0)
@@ -417,8 +444,11 @@ def format_evals(evals):
 
 def get_transformation_query_engine(index, name, k):
     if name == "hyde":
+        service_context = ServiceContext.from_defaults(
+            llm=OpenAI(temperature=0.6, model_name="gpt-4")
+        )
         query_engine = index.as_query_engine(
-            similarity_top_k=k, response_mode="compact"
+            similarity_top_k=k, response_mode="compact", service_context=service_context
         )
         hyde = HyDEQueryTransform(include_original=True)
         hyde_query_engine = TransformQueryEngine(query_engine, hyde)
@@ -447,22 +477,124 @@ def get_transformation_query_engine(index, name, k):
         return
 
 
+@retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
+async def aquery(engine, query, index):
+    try:
+        print(f"TRYING REQUEST {index}")
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, engine.query, query)
+        return response
+
+    except:
+        print(f"REQUEST {index} FAILED. RETRYING")
+
+
+async def process_query(engine, name, query, index, semaphore, k):
+    async with semaphore:
+        print("-" * 50)
+        time_start = time.time()
+        response = await aquery(engine, query, index)
+        time_end = time.time()
+        response_latency = time_end - time_start
+        print(f"{name} RESPONSE: ", response, "\n")
+        print(f"LATENCY: {response_latency:.2f}", "\n")
+
+        # special case if the query transformation is the multistep
+        # only log latency, response evaluation
+        # if name == "multistep":
+        #     res_eval = format_evals([evaluator.evaluate(query, response)])
+        #     print(f"{name} EVAL: ", res_eval, "\n")
+        #     row = [query, response, res_eval[0], response_latency]
+        #     query_transformation_data[name].append(row)
+
+        #     continue
+
+        # evals = evaluator.evaluate_source_nodes(
+        #     query, response
+        # )  # evaluates if the retrieved nodes contain an answer to the query
+        contexts = [
+            source_node.node.get_content() for source_node in response.source_nodes
+        ]
+        evals = evaluate_query_and_retrieved_context(
+            query,
+            contexts,
+            "gpt-4",
+            evaluation_template=JASON_INIT_EVALUATION_SYSTEM_MESSAGE,
+        )
+        formatted_evals = format_evals(evals)
+
+        print("CONTEXT EVALS: ", formatted_evals)
+
+        # context precision at i
+        cpis = [compute_precision_at_i(formatted_evals, i) for i in range(1, k + 1)]
+
+        # average context precision at k for this query
+        acpk = [
+            compute_average_precision_at_i(formatted_evals, cpis, i)
+            for i in range(1, k + 1)
+        ]
+
+        # get the evaluation of the response
+        # res_eval = format_evals([evaluator.evaluate(query, response)]) # don't need this for now
+
+        row = (
+            [query, response]
+            + cpis
+            + acpk
+            + formatted_evals
+            # + res_eval
+            + [response_latency]
+            + contexts
+        )
+        print("-" * 50)
+
+        return row
+
+
+async def process_queries(engine, name, queries, k, batch_size=50):
+    """
+    Async function to process a queries and get other information.
+
+    Returns a list of rows, where the row contains processed information
+    """
+    semaphore = asyncio.Semaphore(batch_size)
+    tasks = [
+        process_query(engine, name, query, index + 1, semaphore, k)
+        for index, query in enumerate(queries)
+    ]
+    return await asyncio.gather(*tasks)
+
+
 def run_experiments(
-    documents, queries, chunk_sizes, query_transformations, evaluator, k
+    documents, queries, chunk_sizes, query_transformations, k, web_title, rerank=False
 ):
     all_data = {}
     for chunk_size in chunk_sizes:
         print(f"PARSING WITH CHUNK SIZE {chunk_size}")
-        node_parser = SimpleNodeParser.from_defaults(
-            chunk_size=chunk_size, chunk_overlap=0
-        )  # you can also experiment with the chunk overlap too
-        nodes = node_parser.get_nodes_from_documents(documents)
-        index = VectorStoreIndex(nodes, show_progress=True)
+        persist_dir = f"./indices/{web_title}_{chunk_size}"
+        if os.path.isdir(persist_dir):
+            print("EXISTING INDEX FOUND, LOADING...")
+            # Rebuild storage context
+            storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
+
+            # Load index from the storage context
+            index = load_index_from_storage(storage_context)
+        else:
+            print("BUILDING INDEX...")
+            node_parser = SimpleNodeParser.from_defaults(
+                chunk_size=chunk_size, chunk_overlap=0
+            )  # you can also experiment with the chunk overlap too
+            nodes = node_parser.get_nodes_from_documents(documents)
+            index = VectorStoreIndex(nodes, show_progress=True)
+            index.storage_context.persist(persist_dir)
 
         engines = {}
         # query cosine similarity to nodes engine
+        service_context = ServiceContext.from_defaults(
+            llm=OpenAI(temperature=0.6, model_name="gpt-4")
+        )
         query_engine = index.as_query_engine(
-            similarity_top_k=k, response_mode="compact"
+            similarity_top_k=k, response_mode="compact", service_context=service_context
         )  # response mode can also be parameterized
         engines["original"] = query_engine
 
@@ -473,29 +605,43 @@ def run_experiments(
 
         query_transformation_data = {name: [] for name in engines}
 
-        for query in queries:
+        for name in engines:
+            engine = engines[name]
             # these take some time to compute...
-            print("\n")
-            print("COMPUTING RESPONSES FOR QUERY: ", query)
 
-            for name, engine in engines.items():
+            for i, query in enumerate(queries):
+                print("-" * 50)
+
+                @retry(
+                    wait=wait_random_exponential(min=1, max=60),
+                    stop=stop_after_attempt(6),
+                )
+                def query_with_retry():
+                    print(f"TRYING REQUEST {i + 1}")
+                    print(f"QUERY:\n{query}\n")
+                    try:
+                        response = engine.query(query)
+                        return response
+                    except:
+                        print(f"REQUEST {i + 1} FAILED. RETRYING")
+
                 time_start = time.time()
-                response = engine.query(query)
+                response = query_with_retry()
                 time_end = time.time()
                 response_latency = time_end - time_start
 
-                print(f"{name} RESPONSE: ", response, "\n")
+                print(f"{name.upper()} RESPONSE: ", response, "\n")
                 print(f"LATENCY: {response_latency:.2f}", "\n")
 
-                # special case if the query transormation is the multistep
+                # special case if the query transformation is the multistep
                 # only log latency, response evaluation
-                if name == "multistep":
-                    res_eval = format_evals([evaluator.evaluate(query, response)])
-                    print(f"{name} EVAL: ", res_eval, "\n")
-                    row = [query, response, res_eval[0], response_latency]
-                    query_transformation_data[name].append(row)
+                # if name == "multistep":
+                #     res_eval = format_evals([evaluator.evaluate(query, response)])
+                #     print(f"{name} EVAL: ", res_eval, "\n")
+                #     row = [query, response, res_eval[0], response_latency]
+                #     query_transformation_data[name].append(row)
 
-                    continue
+                #     continue
 
                 # evals = evaluator.evaluate_source_nodes(
                 #     query, response
@@ -504,7 +650,12 @@ def run_experiments(
                     source_node.node.get_content()
                     for source_node in response.source_nodes
                 ]
-                evals = evaluate_query_and_retrieved_context(query, contexts, "gpt-4")
+                evals = evaluate_query_and_retrieved_context(
+                    query,
+                    contexts,
+                    "gpt-4",
+                    evaluation_template=JASON_INIT_EVALUATION_SYSTEM_MESSAGE,
+                )
                 formatted_evals = format_evals(evals)
 
                 print("CONTEXT EVALS: ", formatted_evals)
@@ -521,27 +672,27 @@ def run_experiments(
                 ]
 
                 # get the evaluation of the response
-                res_eval = format_evals([evaluator.evaluate(query, response)])
+                # res_eval = format_evals([evaluator.evaluate(query, response)]) # don't need this for now
 
                 row = (
                     [query, response]
                     + cpis
                     + acpk
                     + formatted_evals
-                    + res_eval
+                    # + res_eval
                     + [response_latency]
                     + contexts
                 )
                 query_transformation_data[name].append(row)
 
-                print("\n\n")
+                print("-" * 50)
 
         columns = (
             ["query", "response"]
             + [f"context_precision_at_{i}" for i in range(1, k + 1)]
             + [f"average_context_precision_at_{i}" for i in range(1, k + 1)]
             + [f"context_{i}_evaluation" for i in range(1, k + 1)]
-            + ["response_evaluation", "response_latency"]
+            + ["response_latency"]
             + [f"retrieved_context_{i}" for i in range(1, k + 1)]
         )
         all_data[chunk_size] = {}
@@ -561,8 +712,6 @@ def run_experiments(
                 df = pd.DataFrame(data, columns=columns)
             all_data[chunk_size][name] = df
 
-        print("\n\n")
-
     return all_data
 
 
@@ -573,8 +722,8 @@ def main():
     # if loading from scratch, change these two
     web_title = "arize"  # nickname for this website, used for saving purposes
     base_url = "https://docs.arize.com/arize"
-    urls = get_urls(base_url)
-    print(f"LOADED {len(urls)} URLS")
+    # urls = get_urls(base_url)
+    # print(f"LOADED {len(urls)} URLS")
 
     print("GRABBING DOCUMENTS")
     # two options here, either get the documents from scratch or load one from disk
@@ -585,19 +734,21 @@ def main():
 
     chunk_sizes = [
         2000,
-        2500,
+        # 2500,
     ]  # change this, perhaps experiment from 500 to 3000 in increments of 500
     k = 4  # num documents to retrieve
-    llm_predictor = LLMPredictor(llm=OpenAI(temperature=0, model_name="gpt-4"))
-    service_context = ServiceContext.from_defaults(llm_predictor=llm_predictor)
-    evaluator = QueryResponseEvaluator(service_context=service_context)
+
+    # use direct call to openai instead, leaving here incase needed in the futre
+    # llm_predictor = LLMPredictor(llm=OpenAI(temperature=0, model_name="gpt-4"))
+    # service_context = ServiceContext.from_defaults(llm_predictor=llm_predictor)
+    # evaluator = QueryResponseEvaluator(service_context=service_context)
 
     # query transformers
     # transformations = ["hyde", "multistep"] # ignore this one for now
-    transformations = ["hyde"]
+    transformations = []
 
     all_data = run_experiments(
-        documents, questions_small, chunk_sizes, transformations, evaluator, k
+        documents, questions[:5], chunk_sizes, transformations, k, web_title
     )
 
     # save data to disk
@@ -606,8 +757,8 @@ def main():
         os.makedirs(save_dir)
     with open(f"{save_dir}/{web_title}_all_data.pkl", "wb") as f:
         pickle.dump(all_data, f)
-    plot_precision_graphs(all_data, k, web_title)
-    plot_latency_graphs(all_data, web_title)
+    plot_precision_graphs(all_data, k, web_title, show=False)
+    plot_latency_graphs(all_data, web_title, show=False)
     # plot_response_evaluation_graphs(all_data, web_title) # work in progress
 
 
