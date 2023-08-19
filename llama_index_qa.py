@@ -1,6 +1,8 @@
 """
 Llama Index implementation of a chatbot
 """
+from llama_index.callbacks import CallbackManager, LlamaDebugHandler, CBEventType
+
 from sklearn.metrics import ndcg_score
 from ast import List
 from tenacity import (
@@ -382,8 +384,6 @@ def plot_ndcg_graphs(all_data, k, save_dir="./", show=True):
 
 def plot_precision_graphs(all_data, k, save_dir="./", show=True):
     for i in range(1, k + 1):
-        plt.figure()
-
         mean_average_precisions_dict = {}
         for chunk_size, method_data in all_data.items():
             for method, df in method_data.items():
@@ -436,41 +436,43 @@ def plot_latency_graphs(all_data, save_dir="./", show=True):
     plt.savefig(f"{save_dir}/latency.png")
     if show:
         plt.show()
+    else:
+        plt.close()
 
 
-def plot_response_evaluation_graphs(all_data, save_dir="./", show=True):
-    # Create an empty dictionary to store the mean evaluations for each method and chunk size
-    mean_evaluations_dict = {}
+# def plot_response_evaluation_graphs(all_data, save_dir="./", show=True):
+#     # Create an empty dictionary to store the mean evaluations for each method and chunk size
+#     mean_evaluations_dict = {}
 
-    # Iterate through the input dictionary to compute the mean evaluations for each method and chunk size
-    for chunk_size, method_data in all_data.items():
-        for method, df in method_data.items():
-            mean_evaluations = df["response_evaluation"].mean()
-            if chunk_size not in mean_evaluations_dict:
-                mean_evaluations_dict[chunk_size] = {}
-            mean_evaluations_dict[chunk_size][method] = mean_evaluations
+#     # Iterate through the input dictionary to compute the mean evaluations for each method and chunk size
+#     for chunk_size, method_data in all_data.items():
+#         for method, df in method_data.items():
+#             mean_evaluations = df["response_evaluation"].mean()
+#             if chunk_size not in mean_evaluations_dict:
+#                 mean_evaluations_dict[chunk_size] = {}
+#             mean_evaluations_dict[chunk_size][method] = mean_evaluations
 
-    # Convert the mean_evaluations_dict to a DataFrame for easier plotting
-    df_mean_evaluations = pd.DataFrame.from_dict(mean_evaluations_dict)
+#     # Convert the mean_evaluations_dict to a DataFrame for easier plotting
+#     df_mean_evaluations = pd.DataFrame.from_dict(mean_evaluations_dict)
 
-    # Plot the grouped bar graph
-    df_mean_evaluations.plot(kind="bar", width=0.8, figsize=(10, 6))
-    plt.xlabel("Chunk Size")
-    plt.ylabel("Mean Response Evaluation")
-    plt.title("Mean Response Evaluation for Different Chunk Sizes and Methods")
-    plt.legend(title="Method", bbox_to_anchor=(1, 1))
-    plt.tight_layout()
-    plt.savefig(f"{save_dir}/evaluation.png")
+#     # Plot the grouped bar graph
+#     df_mean_evaluations.plot(kind="bar", width=0.8, figsize=(10, 6))
+#     plt.xlabel("Chunk Size")
+#     plt.ylabel("Mean Response Evaluation")
+#     plt.title("Mean Response Evaluation for Different Chunk Sizes and Methods")
+#     plt.legend(title="Method", bbox_to_anchor=(1, 1))
+#     plt.tight_layout()
+#     plt.savefig(f"{save_dir}/evaluation.png")
 
-    if show:
-        plt.show()
+#     if show:
+#         plt.show()
 
 
-def plot_graphs(*args, **kwargs):
-    plot_latency_graphs(args, kwargs)
-    plot_precision_graphs(args, kwargs)
-    plot_ndcg_graphs(args, kwargs)
-    plot_mrr_graphs(args, kwargs)
+def plot_graphs(all_data, k, save_dir="./", show=True):
+    plot_latency_graphs(all_data, save_dir, show)
+    plot_precision_graphs(all_data, k, save_dir, show)
+    plot_ndcg_graphs(all_data, k, save_dir, show)
+    plot_mrr_graphs(all_data, k, save_dir, show)
 
 
 @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
@@ -522,7 +524,7 @@ def get_transformation_query_engine(index, name, k):
         )
         query_engine = index.as_query_engine(
             similarity_top_k=k * 2,
-            response_mode="compact",  # response mode can also be parameterized
+            response_mode="refine",  # response mode can also be parameterized
             service_context=service_context,
             node_postprocessors=[cohere_rerank],
         )
@@ -532,7 +534,7 @@ def get_transformation_query_engine(index, name, k):
             llm=OpenAI(temperature=0.6, model="gpt-4")  # change to model
         )
         query_engine = index.as_query_engine(
-            similarity_top_k=k, response_mode="compact", service_context=service_context
+            similarity_top_k=k, response_mode="refine", service_context=service_context
         )
         hyde = HyDEQueryTransform(include_original=True)
         hyde_query_engine = TransformQueryEngine(query_engine, hyde)
@@ -542,8 +544,11 @@ def get_transformation_query_engine(index, name, k):
     elif name == "hyde_rerank":
         cohere_rerank = CohereRerank(api_key=cohere.api_key, top_n=k)
 
+        llama_debug = LlamaDebugHandler(print_trace_on_end=True)
+        callback_manager = CallbackManager([llama_debug])
         service_context = ServiceContext.from_defaults(
-            llm=OpenAI(temperature=0.6, model="gpt-4")
+            llm=OpenAI(temperature=0.6, model="gpt-4"),
+            callback_manager=callback_manager,
         )
         query_engine = index.as_query_engine(
             similarity_top_k=k * 2,
@@ -612,8 +617,11 @@ def run_experiments(
 
         engines = {}
         # query cosine similarity to nodes engine
+        llama_debug = LlamaDebugHandler(print_trace_on_end=True)
+        callback_manager = CallbackManager([llama_debug])
         service_context = ServiceContext.from_defaults(
-            llm=OpenAI(temperature=0.6, model="gpt-4")
+            llm=OpenAI(temperature=0.6, model="gpt-4"),
+            callback_manager=callback_manager,
         )
         query_engine = index.as_query_engine(
             similarity_top_k=k,
@@ -636,21 +644,8 @@ def run_experiments(
             for i, query in enumerate(queries):
                 print("-" * 50)
 
-                @retry(
-                    wait=wait_random_exponential(min=1, max=60),
-                    stop=stop_after_attempt(6),
-                )
-                def query_with_retry():
-                    print(f"TRYING REQUEST {i + 1}")
-                    print(f"QUERY:\n{query}\n")
-                    try:
-                        response = engine.query(query)
-                        return response
-                    except:
-                        print(f"REQUEST {i + 1} FAILED. RETRYING")
-
                 time_start = time.time()
-                response = query_with_retry()
+                response = engine.query(query)
                 time_end = time.time()
                 response_latency = time_end - time_start
 
@@ -769,17 +764,19 @@ def main():
         documents = pickle.load(file)
 
     chunk_sizes = [
-        500,
-        1000,
-        2500,
+        300,
+        # 500,
+        # 1000,
+        # 2000,
+        # 2500,
     ]  # change this, perhaps experiment from 500 to 3000 in increments of 500
-    k = 5  # num documents to retrieve
+    k = 4  # num documents to retrieve
 
     transformations = ["original_rerank"]
 
     all_data = run_experiments(
         documents,
-        questions[100:110],
+        questions,
         chunk_sizes,
         transformations,
         k,
@@ -788,11 +785,13 @@ def main():
     )
 
     # save data to disk
-    save_dir = f"./experiment_data/{web_title}_small/"
+    save_dir = f"./experiment_data/{web_title}_300/"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    with open(f"{save_dir}/{web_title}_all_data.pkl", "wb") as f:
+    with open(f"{save_dir}{web_title}_all_data.pkl", "wb") as f:
         pickle.dump(all_data, f)
+    # with open(f"{save_dir}{web_title}_all_data.pkl", "rb") as f:
+    #     all_data = pickle.load(f)
     plot_graphs(all_data, k, save_dir, show=False)
 
 
