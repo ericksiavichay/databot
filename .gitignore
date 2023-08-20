@@ -1,7 +1,7 @@
 .DS_Store
 .chroma
 .conda
-/experiment_data
-/indices
+# /experiment_data
+# /indices
 config.py
 __pycache__/
