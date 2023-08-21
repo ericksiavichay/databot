@@ -140,25 +140,12 @@ def compute_average_precision_at_i(evals, cpis, i):
     return (np.array(evals[:i]) @ np.array(subset)) / np.sum(evals[:i])
 
 
-def compute_mean_precision(df, i):
-    return df[f"precision_at_{i}"].mean()
-
-
-def compute_mean_precisions(df):
-    """
-    given a df with columns named precision_at_{i}, compute
-    the columns' mean precisions
-    """
-    mean_precisions = df[[f"precision_at_{i}" for i in range(1, k + 1)]].mean()
-    return mean_precisions
-
-
 def plot_mrr_graphs(all_data, k, save_dir="./", show=True):
     for i in range(1, k + 1):
         plt.figure()
 
         mrrs_dict = {}
-        for chunk_size, method_data in all_data.items():
+        for chunk_size, method_data in sorted(all_data.items()):
             for method, df in method_data.items():
                 if method == "multistep":
                     continue
@@ -179,7 +166,7 @@ def plot_mrr_graphs(all_data, k, save_dir="./", show=True):
         plt.tight_layout()
         plt.savefig(f"{save_dir}/mrr_at_{i}.png")
         if show:
-            plt.show()
+            plt.show("all")
 
 
 def plot_ndcg_graphs(all_data, k, save_dir="./", show=True):
@@ -187,7 +174,7 @@ def plot_ndcg_graphs(all_data, k, save_dir="./", show=True):
         plt.figure()
 
         average_ndcgs_dict = {}
-        for chunk_size, method_data in all_data.items():
+        for chunk_size, method_data in sorted(all_data.items()):
             for method, df in method_data.items():
                 if method == "multistep":
                     continue
@@ -208,13 +195,13 @@ def plot_ndcg_graphs(all_data, k, save_dir="./", show=True):
         plt.tight_layout()
         plt.savefig(f"{save_dir}/average_ndcg_at_{i}.png")
         if show:
-            plt.show()
+            plt.show("all")
 
 
 def plot_precision_graphs(all_data, k, save_dir="./", show=True):
     for i in range(1, k + 1):
         mean_average_precisions_dict = {}
-        for chunk_size, method_data in all_data.items():
+        for chunk_size, method_data in sorted(all_data.items()):
             for method, df in method_data.items():
                 if method == "multistep":
                     continue
@@ -237,7 +224,7 @@ def plot_precision_graphs(all_data, k, save_dir="./", show=True):
         plt.tight_layout()
         plt.savefig(f"{save_dir}/mean_avg_p_at_{i}.png")
         if show:
-            plt.show()
+            plt.show("all")
 
 
 def plot_latency_graphs(all_data, save_dir="./", show=True):
@@ -245,7 +232,7 @@ def plot_latency_graphs(all_data, save_dir="./", show=True):
     mean_latency_dict = {}
 
     # Iterate through the input dictionary to compute the mean latency for each method and chunk size
-    for chunk_size, method_data in all_data.items():
+    for chunk_size, method_data in sorted(all_data.items()):
         for method, df in method_data.items():
             mean_latency = df["response_latency"].mean()
             if method not in mean_latency_dict:
@@ -266,7 +253,7 @@ def plot_latency_graphs(all_data, save_dir="./", show=True):
     if show:
         plt.show()
     else:
-        plt.close()
+        plt.close("all")
 
 
 # def plot_response_evaluation_graphs(all_data, save_dir="./", show=True):
@@ -421,7 +408,7 @@ def get_rank(evals):
 
 
 def run_experiments(
-    documents, queries, chunk_sizes, query_transformations, k, web_title, rerank=False
+    documents, queries, chunk_sizes, query_transformations, k, web_title
 ):
     all_data = {}
 
@@ -449,7 +436,7 @@ def run_experiments(
         llama_debug = LlamaDebugHandler(print_trace_on_end=True)
         callback_manager = CallbackManager([llama_debug])
         service_context = ServiceContext.from_defaults(
-            llm=OpenAI(temperature=0.6, model="gpt-4"),
+            llm=OpenAI(temperature=float(0.6), model="gpt-4"),
             callback_manager=callback_manager,
         )
         query_engine = index.as_query_engine(
@@ -473,12 +460,14 @@ def run_experiments(
             for i, query in enumerate(queries):
                 print("-" * 50)
 
+                print(f"TRANSFORMATION: {name}")
+                print(f"QUERY {i + 1}: ", query, "\n")
                 time_start = time.time()
                 response = engine.query(query)
                 time_end = time.time()
                 response_latency = time_end - time_start
 
-                print(f"{name.upper()} RESPONSE: ", response, "\n")
+                print(f"RESPONSE: ", response, "\n")
                 print(f"LATENCY: {response_latency:.2f}", "\n")
 
                 # special case if the query transformation is the multistep
@@ -593,15 +582,15 @@ def main():
         documents = pickle.load(file)
 
     chunk_sizes = [
-        300,
+        # 300,
         # 500,
-        # 1000,
+        1000,
         # 2000,
         # 2500,
     ]  # change this, perhaps experiment from 500 to 3000 in increments of 500
     k = 4  # num documents to retrieve
 
-    transformations = ["original_rerank"]
+    transformations = []
 
     all_data = run_experiments(
         documents,
@@ -610,22 +599,21 @@ def main():
         transformations,
         k,
         web_title,
-        rerank=True,
     )
 
     # save data to disk
-    save_dir = f"./experiment_data/{web_title}_300/"
+    save_dir = f"./experiment_data/{web_title}_1000/"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     with open(f"{save_dir}{web_title}_all_data.pkl", "wb") as f:
         pickle.dump(all_data, f)
-    # with open(f"{save_dir}{web_title}_all_data.pkl", "rb") as f:
-    #     all_data = pickle.load(f)
+
     plot_graphs(all_data, k, save_dir, show=False)
 
 
-program_start = time.time()
-main()
-program_end = time.time()
-total_time = (program_end - program_start) / (60 * 60)
-print(f"EXPERIMENTS FINISHED: {total_time:.2f} hrs")
+if __name__ == "__main__":
+    program_start = time.time()
+    main()
+    program_end = time.time()
+    total_time = (program_end - program_start) / (60 * 60)
+    print(f"EXPERIMENTS FINISHED: {total_time:.2f} hrs")
