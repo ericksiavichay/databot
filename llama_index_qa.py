@@ -590,7 +590,7 @@ def main():
     ]  # change this, perhaps experiment from 500 to 3000 in increments of 500
     k = 4  # num documents to retrieve
 
-    transformations = ["original_rerank"]
+    transformations = []
 
     all_data = run_experiments(
         documents,
@@ -602,7 +602,7 @@ def main():
     )
 
     # save data to disk
-    save_dir = f"./experiment_data/{web_title}/"
+    save_dir = f"./experiment_data/{web_title}_1000/"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     with open(f"{save_dir}{web_title}_all_data.pkl", "wb") as f:
