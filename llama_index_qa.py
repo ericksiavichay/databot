@@ -454,6 +454,10 @@ def run_experiments(
         query_transformation_data = {name: [] for name in engines}
 
         for name in engines:
+            # debug. TODO: delete
+            if name == "original":
+                continue
+
             engine = engines[name]
             # these take some time to compute...
 
@@ -582,15 +586,15 @@ def main():
         documents = pickle.load(file)
 
     chunk_sizes = [
-        # 300,
-        # 500,
+        300,
+        500,
         1000,
         # 2000,
         # 2500,
     ]  # change this, perhaps experiment from 500 to 3000 in increments of 500
     k = 4  # num documents to retrieve
 
-    transformations = []
+    transformations = ["hyde", "hyde_rerank"]
 
     all_data = run_experiments(
         documents,
@@ -602,7 +606,7 @@ def main():
     )
 
     # save data to disk
-    save_dir = f"./experiment_data/{web_title}_1000/"
+    save_dir = f"./experiment_data/{web_title}_hyde/"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     with open(f"{save_dir}{web_title}_all_data.pkl", "wb") as f:
