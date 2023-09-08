@@ -131,6 +131,7 @@ def test_get_rank_at_k(rank_fn, all_rank_solutions, k=10):
     test_index = 1
     for evaluations, solutions in zip(all_evaluations, all_rank_solutions):
         ranks = [rank_fn(evaluations[: i + 1]) for i in range(k)]
+        assert ranks == solutions, f"Get rank at test {test_index} failed"
 
 
 if __name__ == "__main__":
