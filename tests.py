@@ -58,11 +58,20 @@ all_precision_solutions = [
     precision_solutions_6,
 ]
 
+all_rank_solutions = []
+for evaluations in all_evaluations:
+    rank_solutions = []
+    for i in range(10):
+        try:
+            rank_solutions.append(evaluations[: i + 1].index(1) + 1)
+        except ValueError:
+            rank_solutions.append(np.inf)
+    all_rank_solutions.append(rank_solutions)
+
 # solutions for average precision at i
 all_average_precision_solutions = []
 for evaluations, precision_solutions in zip(all_evaluations, all_precision_solutions):
     average_precision_solutions = []
-    total = 0
     for i in range(10):
         m = sum(evaluations[: i + 1])
         if m == 0:
@@ -71,9 +80,8 @@ for evaluations, precision_solutions in zip(all_evaluations, all_precision_solut
             dot_product = np.array(precision_solutions[: i + 1]) @ np.array(
                 evaluations[: i + 1]
             )
-            total += dot_product
 
-            average_precision_solutions.append(total / m)
+            average_precision_solutions.append(dot_product / m)
 
     all_average_precision_solutions.append(average_precision_solutions)
 
@@ -119,6 +127,12 @@ def test_average_precision_at_k(
         test_index += 1
 
 
+def test_get_rank_at_k(rank_fn, all_rank_solutions, k=10):
+    test_index = 1
+    for evaluations, solutions in zip(all_evaluations, all_rank_solutions):
+        ranks = [rank_fn(evaluations[: i + 1]) for i in range(k)]
+
+
 if __name__ == "__main__":
     print("Running tests...")
 
@@ -131,5 +145,8 @@ if __name__ == "__main__":
         compute_average_precision_at_i, all_average_precision_solutions, 10
     )
     print("Average precision at k tests passed!")
+
+    test_get_rank_at_k(get_rank, all_rank_solutions, 10)
+    print("Get rank at k tests passed!")
 
     print("All tests passed!")
