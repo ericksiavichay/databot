@@ -9,22 +9,22 @@ import os
 # with open("./query_centroid.npy", "rb") as f:
 #     query_centroid = np.load(f)
 
-with open("./experiment_data/arize/arize_all_data.pkl", "rb") as file:
-    all_data = pickle.load(file)
+# with open("./experiment_data/arize/arize_all_data.pkl", "rb") as file:
+#     all_data = pickle.load(file)
 
-with open("./experiment_data/arize_hyde/arize_all_data.pkl", "rb") as file:
-    all_data_hyde = pickle.load(file)
+# with open("./experiment_data/arize_hyde/arize_all_data.pkl", "rb") as file:
+#     all_data_hyde = pickle.load(file)
 
-all_data_with_hyde = {}
+# all_data_with_hyde = {}
 
-for chunk_size in all_data_hyde:
-    all_data[chunk_size]["hyde"] = all_data_hyde[chunk_size]["hyde"]
-    all_data[chunk_size]["hyde_rerank"] = all_data_hyde[chunk_size]["hyde_rerank"]
+# for chunk_size in all_data_hyde:
+#     all_data[chunk_size]["hyde"] = all_data_hyde[chunk_size]["hyde"]
+#     all_data[chunk_size]["hyde_rerank"] = all_data_hyde[chunk_size]["hyde_rerank"]
 
 save_dir = f"./experiment_data/arize_hyde/"
 
-with open(f"{save_dir}arize_all_data_hyde.pkl", "wb") as f:
-    pickle.dump(all_data, f)
+with open(f"{save_dir}arize_all_data_hyde.pkl", "rb") as file:
+    all_data = pickle.load(file)
 
 plot_graphs(all_data, 4, "./experiment_data/arize_hyde/", show=False)
 

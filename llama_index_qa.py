@@ -198,7 +198,7 @@ def plot_ndcg_graphs(all_data, k, save_dir="./", show=True):
             plt.show("all")
 
 
-def plot_precision_graphs(all_data, k, save_dir="./", show=True):
+def plot_mean_average_precision_graphs(all_data, k, save_dir="./", show=True):
     for i in range(1, k + 1):
         mean_average_precisions_dict = {}
         for chunk_size, method_data in sorted(all_data.items()):
@@ -249,11 +249,66 @@ def plot_latency_graphs(all_data, save_dir="./", show=True):
     plt.title("Mean Latency for Different Chunk Sizes and Methods")
     plt.legend(title="Method", bbox_to_anchor=(1, 1))
     plt.tight_layout()
-    plt.savefig(f"{save_dir}/latency.png")
+    plt.savefig(f"{save_dir}/mean_latency.png")
     if show:
         plt.show()
     else:
         plt.close("all")
+
+    median_latency_dict = {}
+
+    # Iterate through the input dictionary to compute the median latency for each method and chunk size
+    for chunk_size, method_data in sorted(all_data.items()):
+        for method, df in method_data.items():
+            median_latency = df["response_latency"].median()
+            if method not in median_latency_dict:
+                median_latency_dict[method] = {}
+            median_latency_dict[method][chunk_size] = median_latency
+
+    # Convert the median_latency_dict to a DataFrame for easier plotting
+    df_median_latency = pd.DataFrame.from_dict(median_latency_dict)
+
+    # Plot the grouped bar graph
+    df_median_latency.plot(kind="bar", width=0.8, figsize=(10, 6))
+    plt.xlabel("Chunk Size (tokens)")
+    plt.ylabel("Median Latency (seconds)")
+    plt.title("Median Latency for Different Chunk Sizes and Methods")
+    plt.legend(title="Method", bbox_to_anchor=(1, 1))
+    plt.tight_layout()
+    plt.savefig(f"{save_dir}/median_latency.png")
+    if show:
+        plt.show()
+    else:
+        plt.close("all")
+
+
+def plot_mean_precision_graphs(all_data, k, save_dir, show=True):
+    for i in range(1, k + 1):
+        plt.figure()
+
+        mean_precisions_dict = {}
+        for chunk_size, method_data in sorted(all_data.items()):
+            for method, df in method_data.items():
+                if method == "multistep":
+                    continue
+                mean_precision_i = df[f"context_precision_at_{i}"].mean()
+                if method not in mean_precisions_dict:
+                    mean_precisions_dict[method] = {}
+                mean_precisions_dict[method][chunk_size] = mean_precision_i
+
+        # Convert the mean_evaluations_dict to a DataFrame for easier plotting
+        df_mean_precisions = pd.DataFrame.from_dict(mean_precisions_dict)
+
+        # Plot the grouped bar graph
+        df_mean_precisions.plot(kind="bar", width=0.8, figsize=(10, 6))
+        plt.xlabel("Chunk Size")
+        plt.ylabel(f"Mean Precision @ {i}")
+        plt.title(f"Mean Precision @ {i} for Different Chunk Sizes and Methods")
+        plt.legend(title="Method", bbox_to_anchor=(1, 1))
+        plt.tight_layout()
+        plt.savefig(f"{save_dir}/mean_precision_at_{i}.png")
+        if show:
+            plt.show("all")
 
 
 # def plot_response_evaluation_graphs(all_data, save_dir="./", show=True):
@@ -286,7 +341,8 @@ def plot_latency_graphs(all_data, save_dir="./", show=True):
 
 def plot_graphs(all_data, k, save_dir="./", show=True):
     plot_latency_graphs(all_data, save_dir, show)
-    plot_precision_graphs(all_data, k, save_dir, show)
+    plot_mean_average_precision_graphs(all_data, k, save_dir, show)
+    plot_mean_precision_graphs(all_data, k, save_dir, show)
     plot_ndcg_graphs(all_data, k, save_dir, show)
     plot_mrr_graphs(all_data, k, save_dir, show)
 
